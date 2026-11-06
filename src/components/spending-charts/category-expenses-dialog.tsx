@@ -155,12 +155,15 @@ export function CategoryExpensesDialog({
   filter,
   currency,
   onOpenChange,
+  onCloseAutoFocus,
 }: {
   category: CategoryDatum | null;
   open: boolean;
   filter: SpendingFilter;
   currency: CurrencyLabel;
   onOpenChange: (open: boolean) => void;
+  /** Returns focus on close; Radix only restores it to a DialogTrigger, and this dialog has none. */
+  onCloseAutoFocus: (event: Event) => void;
 }): React.JSX.Element {
   const getCategoryExpensesFn = useServerFn(getCategoryExpenses);
   const categoryId = category?.categoryId;
@@ -179,7 +182,10 @@ export function CategoryExpensesDialog({
 
   return (
     <Dialog open={open && category !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="glass-panel sm:max-w-2xl">
+      <DialogContent
+        className="glass-panel sm:max-w-2xl"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         {category ? (
           <>
             <DialogHeader>

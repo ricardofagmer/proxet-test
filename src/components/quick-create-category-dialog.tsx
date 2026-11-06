@@ -81,7 +81,7 @@ export function QuickCreateCategoryDialog({
         color,
       });
       if ("error" in result) {
-        setError(result.error);
+        setError(result.error ?? m.unknown_error());
         return;
       }
       onCreated(result.id);

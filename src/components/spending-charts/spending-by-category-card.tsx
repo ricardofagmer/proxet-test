@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { m } from "#/paraglide/messages";
 import { cn } from "#/lib/utils";
 import { Select, SelectItem } from "#/components/ui/select";
@@ -62,15 +62,21 @@ export function SpendingByCategoryCard({
   const [view, setView] = useStoredChartView();
   const [selectedCategory, setSelectedCategory] = useState<CategoryDatum | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
+  // Label of the chart mark or table button that opened the dialog. Recharts
+  // remounts bar shapes on re-render, so the opener is found again by label.
+  const openerLabelRef = useRef<string | null>(null);
   const data = toCategoryData(nodes, links);
 
   const openCategory = (datum: CategoryDatum): void => {
+    const active = document.activeElement;
+    openerLabelRef.current = active?.getAttribute("aria-label") ?? null;
     setSelectedCategory(datum);
     setIsDialogOpen(true);
   };
 
   return (
-    <section aria-labelledby={headingId} className={cn("island-shell rounded-xl p-4", className)}>
+    <section ref={sectionRef} aria-labelledby={headingId} className={cn("island-shell rounded-xl p-4", className)}>
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div className="min-w-0 flex-1">
           <h2 id={headingId} className="text-sm font-semibold mb-1">
@@ -114,6 +120,15 @@ export function SpendingByCategoryCard({
         filter={filter}
         currency={currency}
         onOpenChange={setIsDialogOpen}
+        onCloseAutoFocus={(event) => {
+          const label = openerLabelRef.current;
+          const opener = label
+            ? sectionRef.current?.querySelector<HTMLElement | SVGElement>(`[aria-label="${CSS.escape(label)}"]`)
+            : null;
+          if (!opener) return;
+          event.preventDefault();
+          opener.focus();
+        }}
       />
     </section>
   );

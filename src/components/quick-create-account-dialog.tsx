@@ -78,7 +78,7 @@ export function QuickCreateAccountDialog({
         setError(
           result.code === "account_limit_reached"
             ? m.account_limit_reached({ limit: result.limit })
-            : result.error,
+            : (result.error ?? m.unknown_error()),
         );
         return;
       }

@@ -101,8 +101,8 @@ test.describe("Dashboard category drill-down", () => {
     await expect(vegRow).toContainText("65.50 PLN");
     await expect(dialog.getByText(refund)).toHaveCount(0);
 
-    await expect(dialog.getByRole("definition", { name: "Total" })).toHaveText("165.50 PLN");
-    await expect(dialog.getByRole("definition", { name: "Expenses" })).toHaveText("2");
+    await expect(dialog.getByLabel("Total", { exact: true })).toHaveText("165.50 PLN");
+    await expect(dialog.getByLabel("Expenses", { exact: true })).toHaveText("2");
 
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
@@ -115,7 +115,7 @@ test.describe("Dashboard category drill-down", () => {
 
     const dialog = page.getByRole("dialog", { name: "Groceries" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("definition", { name: "Total" })).toHaveText("165.50 PLN");
+    await expect(dialog.getByLabel("Total", { exact: true })).toHaveText("165.50 PLN");
 
     await dialog.getByRole("button", { name: "Close" }).click();
     await expect(dialog).toBeHidden();
@@ -128,7 +128,7 @@ test.describe("Dashboard category drill-down", () => {
 
     const dialog = page.getByRole("dialog", { name: "Groceries" });
     await expect(dialog.getByRole("table").getByRole("row")).toHaveCount(3);
-    await expect(dialog.getByRole("definition", { name: "Total" })).toHaveText("165.50 PLN");
+    await expect(dialog.getByLabel("Total", { exact: true })).toHaveText("165.50 PLN");
   });
 });
 
@@ -164,6 +164,6 @@ test.describe("Dashboard currency label", () => {
 
     await categoryButton(page, "Bars", "Groceries").click();
     const dialog = page.getByRole("dialog", { name: "Groceries" });
-    await expect(dialog.getByRole("definition", { name: "Total" })).toHaveText("12.00 EUR");
+    await expect(dialog.getByLabel("Total", { exact: true })).toHaveText("12.00 EUR");
   });
 });
