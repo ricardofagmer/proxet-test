@@ -1,0 +1,680 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Finance Tracker - System Flow",
+    "output": "docs/architecture/system-flow/system-flow.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "git@github.com:Railsreactor/interview-agentic-task-finance-tracker.git",
+      "link_mode": "local-only",
+      "revision": "1f0a15efcf23c28c2607c3cb3d0e660c78fe7100"
+    }
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "User",
+      "sublabel": "signed-in browser",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/routes/_authed.tsx",
+          "line": 4,
+          "end_line": 10,
+          "label": "auth guard redirect"
+        }
+      ]
+    },
+    {
+      "id": "routes",
+      "type": "frontend",
+      "label": "Route components",
+      "sublabel": "src/routes/_authed/*",
+      "tag": "useQuery + useServerFn",
+      "pos": [
+        40,
+        360
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/routes/_authed/budgets.tsx",
+          "line": 1,
+          "end_line": 39,
+          "label": "imports *.functions only"
+        },
+        {
+          "path": "src/routes/_authed/budgets.tsx",
+          "line": 481,
+          "end_line": 484,
+          "label": "useServerFn wrappers"
+        },
+        {
+          "path": "src/routes/_authed/receipts/scan.tsx",
+          "line": 158,
+          "end_line": 161,
+          "label": "scan route server fns"
+        }
+      ]
+    },
+    {
+      "id": "pipeline",
+      "type": "security",
+      "label": "Request middleware",
+      "sublabel": "locale · CSRF · headers",
+      "pos": [
+        250,
+        360
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/start.ts",
+          "line": 11,
+          "end_line": 39,
+          "label": "context, locale, error capture"
+        },
+        {
+          "path": "src/start.ts",
+          "line": 46,
+          "end_line": 74,
+          "label": "maintenance, CSRF, headers"
+        },
+        {
+          "path": "src/start.ts",
+          "line": 76,
+          "end_line": 85,
+          "label": "middleware order"
+        }
+      ]
+    },
+    {
+      "id": "serverfns",
+      "type": "backend",
+      "label": "Server functions",
+      "sublabel": "*.functions.ts · createServerFn",
+      "tag": "RPC boundary",
+      "pos": [
+        476,
+        360
+      ],
+      "size": [
+        230,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/budgets.functions.ts",
+          "line": 49,
+          "end_line": 107,
+          "label": "getBudgets / createBudget"
+        },
+        {
+          "path": "src/server/receipts.functions.ts",
+          "line": 43,
+          "end_line": 96,
+          "label": "scanReceipt"
+        }
+      ]
+    },
+    {
+      "id": "logic",
+      "type": "backend",
+      "label": "Server logic",
+      "sublabel": "*.server.ts",
+      "tag": "checkBudgetLimit",
+      "pos": [
+        766,
+        360
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/budgets.server.ts",
+          "line": 68,
+          "end_line": 146,
+          "label": "computeBudgetSpend"
+        },
+        {
+          "path": "src/server/billing.server.ts",
+          "line": 125,
+          "end_line": 147,
+          "label": "free-plan budget gate"
+        },
+        {
+          "path": "src/server/env.ts",
+          "line": 243,
+          "end_line": 245,
+          "label": "free default: 3 budgets"
+        }
+      ]
+    },
+    {
+      "id": "orm",
+      "type": "database",
+      "label": "Drizzle ORM",
+      "sublabel": "src/db/index.ts",
+      "pos": [
+        986,
+        360
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/db/index.ts",
+          "line": 6,
+          "end_line": 45,
+          "label": "driver selection"
+        }
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "Postgres",
+      "sublabel": "PGlite data/pg or DATABASE_URL",
+      "tag": "budget_alerts uq(budget, month)",
+      "pos": [
+        986,
+        520
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/db/index.ts",
+          "line": 14,
+          "end_line": 41,
+          "label": "node-postgres or PGlite"
+        },
+        {
+          "path": "src/db/schema.ts",
+          "line": 322,
+          "end_line": 345,
+          "label": "budget_alerts unique index"
+        }
+      ]
+    },
+    {
+      "id": "ai",
+      "type": "backend",
+      "label": "AI client",
+      "sublabel": "ai.ts",
+      "pos": [
+        446,
+        200
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/ai.ts",
+          "line": 90,
+          "end_line": 112,
+          "label": "provider config"
+        },
+        {
+          "path": "src/server/ai.ts",
+          "line": 463,
+          "end_line": 470,
+          "label": "extractReceiptItems"
+        }
+      ]
+    },
+    {
+      "id": "storage",
+      "type": "backend",
+      "label": "Image storage",
+      "sublabel": "local ./data | S3",
+      "pos": [
+        600,
+        200
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/storage.ts",
+          "line": 4,
+          "end_line": 9,
+          "label": "local or S3 driver"
+        },
+        {
+          "path": "src/server/storage.ts",
+          "line": 160,
+          "end_line": 163,
+          "label": "STORAGE_DRIVER switch"
+        }
+      ]
+    },
+    {
+      "id": "webhook",
+      "type": "backend",
+      "label": "Stripe webhook",
+      "sublabel": "/api/stripe-webhook",
+      "pos": [
+        766,
+        200
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/routes/api.stripe-webhook.ts",
+          "line": 13,
+          "end_line": 46,
+          "label": "verify + processStripeEvent"
+        }
+      ]
+    },
+    {
+      "id": "maint",
+      "type": "backend",
+      "label": "Maintenance loop",
+      "sublabel": "hourly, in-process",
+      "pos": [
+        250,
+        520
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/maintenance.server.ts",
+          "line": 12,
+          "end_line": 34,
+          "label": "compliance + alert sweeps"
+        }
+      ]
+    },
+    {
+      "id": "alerts",
+      "type": "backend",
+      "label": "Budget alerts",
+      "sublabel": "budget-alerts.server.ts",
+      "tag": "1 email / budget / month",
+      "pos": [
+        511,
+        520
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/budget-alerts.server.ts",
+          "line": 94,
+          "end_line": 180,
+          "label": "claim row, then send"
+        },
+        {
+          "path": "src/server/budget-alerts.server.ts",
+          "line": 196,
+          "end_line": 240,
+          "label": "schedule + sweep"
+        },
+        {
+          "path": "src/server/transactions.functions.ts",
+          "line": 306,
+          "label": "scheduled after mutation"
+        }
+      ]
+    },
+    {
+      "id": "email",
+      "type": "backend",
+      "label": "Email adapter",
+      "sublabel": "email.ts",
+      "pos": [
+        521,
+        680
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/email.ts",
+          "line": 4,
+          "end_line": 9,
+          "label": "console / test / resend"
+        }
+      ]
+    },
+    {
+      "id": "sentry",
+      "type": "external",
+      "label": "Sentry",
+      "sublabel": "or GlitchTip, if DSN",
+      "pos": [
+        265,
+        40
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/error-reporting.ts",
+          "line": 16,
+          "end_line": 25,
+          "label": "init only with SENTRY_DSN"
+        }
+      ]
+    },
+    {
+      "id": "gemini",
+      "type": "external",
+      "label": "AI provider",
+      "sublabel": "Gemini (OpenAI-compat)",
+      "pos": [
+        446,
+        40
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/env.ts",
+          "line": 13,
+          "label": "Gemini base URL"
+        },
+        {
+          "path": "src/server/ai.ts",
+          "line": 248,
+          "label": "POST /chat/completions"
+        }
+      ]
+    },
+    {
+      "id": "stripe",
+      "type": "external",
+      "label": "Stripe",
+      "sublabel": "billing events",
+      "pos": [
+        766,
+        40
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/routes/api.stripe-webhook.ts",
+          "line": 21,
+          "end_line": 32,
+          "label": "Stripe-Signature check"
+        }
+      ]
+    },
+    {
+      "id": "resend",
+      "type": "external",
+      "label": "Resend API",
+      "sublabel": "api.resend.com",
+      "pos": [
+        521,
+        840
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/server/email.ts",
+          "line": 70,
+          "end_line": 90,
+          "label": "resend provider"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Browser",
+      "wraps": [
+        "user",
+        "routes"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "TanStack Start server (Node)",
+      "wraps": [
+        "pipeline",
+        "serverfns",
+        "logic",
+        "ai",
+        "storage",
+        "webhook",
+        "maint",
+        "alerts",
+        "email"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Data",
+      "wraps": [
+        "orm",
+        "db"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "External services",
+      "wraps": [
+        "sentry",
+        "gemini",
+        "stripe"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "External email",
+      "wraps": [
+        "resend"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-uses-ui",
+      "from": "user",
+      "to": "routes",
+      "label": "uses"
+    },
+    {
+      "id": "routes-rpc",
+      "from": "routes",
+      "to": "pipeline",
+      "label": "RPC",
+      "variant": "emphasis"
+    },
+    {
+      "id": "pipeline-next",
+      "from": "pipeline",
+      "to": "serverfns",
+      "label": "next()",
+      "variant": "emphasis"
+    },
+    {
+      "id": "fns-call-logic",
+      "from": "serverfns",
+      "to": "logic",
+      "label": "calls",
+      "variant": "emphasis"
+    },
+    {
+      "id": "logic-queries",
+      "from": "logic",
+      "to": "orm",
+      "label": "queries",
+      "variant": "emphasis"
+    },
+    {
+      "id": "orm-sql",
+      "from": "orm",
+      "to": "db",
+      "label": "SQL",
+      "variant": "emphasis"
+    },
+    {
+      "id": "report-errors",
+      "from": "pipeline",
+      "to": "sentry",
+      "label": "reportError",
+      "variant": "dashed"
+    },
+    {
+      "id": "arm-loop",
+      "from": "pipeline",
+      "to": "maint",
+      "label": "arms on 1st request",
+      "variant": "dashed"
+    },
+    {
+      "id": "hourly-sweep",
+      "from": "maint",
+      "to": "alerts",
+      "label": "sweep"
+    },
+    {
+      "id": "schedule-alerts",
+      "from": "serverfns",
+      "to": "alerts",
+      "label": "after mutation",
+      "variant": "dashed"
+    },
+    {
+      "id": "claim-alert-row",
+      "from": "alerts",
+      "to": "db",
+      "label": "claim budget_alerts row"
+    },
+    {
+      "id": "send-alert",
+      "from": "alerts",
+      "to": "email",
+      "label": "sendEmail"
+    },
+    {
+      "id": "deliver-email",
+      "from": "email",
+      "to": "resend",
+      "label": "HTTPS (resend mode)"
+    },
+    {
+      "id": "scan-extract",
+      "from": "serverfns",
+      "to": "ai",
+      "label": "extract items",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "ai-completion",
+      "from": "ai",
+      "to": "gemini",
+      "label": "chat/completions"
+    },
+    {
+      "id": "store-image",
+      "from": "serverfns",
+      "to": "storage",
+      "label": "put image",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "stripe-post",
+      "from": "stripe",
+      "to": "webhook",
+      "label": "signed POST",
+      "variant": "security"
+    },
+    {
+      "id": "process-event",
+      "from": "webhook",
+      "to": "logic",
+      "label": "processStripeEvent"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Request pipeline (src/start.ts)",
+      "items": [
+        "Request middleware order: requestContext -> locale (PARAGLIDE_LOCALE cookie, then Accept-Language) -> maintenance -> CSRF -> security headers",
+        "Function middleware captures server-fn errors and reports them",
+        "Routes import only *.functions.ts; createServerFn bodies become RPC stubs in the client bundle"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Budgets",
+      "items": [
+        "Spend = expenses only (amount_minor < 0), parent budgets roll up subcategories, per currency, per UTC month",
+        "checkBudgetLimit: free plan 3 budgets (BILLING_FREE_MAX_BUDGETS), Pro unlimited"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Budget alerts",
+      "items": [
+        "Scheduled fire-and-forget after mutations in transactions, imports, receipts and budgets functions",
+        "Hourly sweep (runBudgetAlertSweep) also retries failed sends; never armed in TEST_MODE",
+        "budget_alerts unique (budget_id, month): at most one email per budget per month"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Receipt scan and externals",
+      "items": [
+        "scanReceipt stores images via storage.ts, then calls ai.ts extractReceiptItems",
+        "AI provider: Gemini OpenAI-compatible endpoint, or OpenRouter / llama.cpp",
+        "Email provider: console (dev), test (E2E) or Resend; Sentry only when SENTRY_DSN is set"
+      ]
+    }
+  ]
+}
