@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import { getLocale } from "#/paraglide/runtime";
 import { Select, SelectItem } from "#/components/ui/select";
+import { flagEmoji } from "#/lib/flag-emoji";
 
 // ISO 4217 code -> region whose flag represents it. EUR uses the EU flag.
 const CURRENCY_REGIONS: ReadonlyArray<readonly [string, string]> = [
@@ -41,13 +42,6 @@ const CURRENCY_REGIONS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 const REGION_BY_CURRENCY = new Map(CURRENCY_REGIONS);
-
-/** Turns a 2-letter region code into its flag emoji (regional indicators). */
-function flagEmoji(region: string): string {
-  return String.fromCodePoint(
-    ...[...region.toUpperCase()].map((char) => 0x1f1e6 + char.charCodeAt(0) - 65),
-  );
-}
 
 function currencyName(code: string, locale: string): string {
   try {

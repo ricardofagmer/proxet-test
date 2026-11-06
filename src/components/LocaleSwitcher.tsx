@@ -1,6 +1,21 @@
 import type { ReactElement } from "react";
 import { getLocale, locales, setLocale, isLocale } from "#/paraglide/runtime";
 import { m } from "#/paraglide/messages";
+import { flagEmoji } from "#/lib/flag-emoji";
+
+// Flag shown next to each language. English uses the UK flag; regional
+// locales (pt-BR) use their own region.
+const LOCALE_REGIONS: Record<string, string> = {
+  en: "GB",
+  "pt-BR": "BR",
+  es: "ES",
+  pl: "PL",
+};
+
+function localeFlag(locale: string): string {
+  const region = LOCALE_REGIONS[locale] ?? locale.split("-")[1];
+  return region ? `${flagEmoji(region)} ` : "";
+}
 
 // Each language is shown in its own language ("Polski", "Español"), the
 // convention for language pickers, so no translated names are needed.
@@ -33,7 +48,7 @@ export default function LocaleSwitcher({ id = "locale-switcher" }: { id?: string
       >
         {locales.map((locale) => (
           <option key={locale} value={locale}>
-            {nativeLanguageName(locale)}
+            {`${localeFlag(locale)}${nativeLanguageName(locale)}`}
           </option>
         ))}
       </select>

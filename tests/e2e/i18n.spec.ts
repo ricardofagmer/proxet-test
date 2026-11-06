@@ -4,17 +4,17 @@ import { test, expect } from "./fixtures";
 // browser's Accept-Language and then English. URLs never carry a locale.
 
 test.describe("Language selection", () => {
-  test("lists English, Portuguese (Brazil), Spanish and Polish on the login page", async ({
+  test("lists English, Portuguese (Brazil), Spanish and Polish with flags on the login page", async ({
     page,
   }) => {
     await page.goto("/login");
     const picker = page.getByLabel("Language");
     await expect(picker).toHaveValue("en");
     await expect(picker.locator("option")).toHaveText([
-      "English",
-      /Português/,
-      /Español/,
-      "Polski",
+      "🇬🇧 English",
+      /^🇧🇷 Português/,
+      /^🇪🇸 Español/,
+      "🇵🇱 Polski",
     ]);
   });
 
