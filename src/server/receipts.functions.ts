@@ -334,6 +334,9 @@ export const updateReceiptItems = createServerFn({ method: "POST" })
       0,
     );
 
+    // Item categories count toward budgets for uncategorized expenses.
+    scheduleBudgetAlertEvaluation(userId);
+
     return {
       success: true,
       items: insertedItems,

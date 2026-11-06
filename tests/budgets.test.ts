@@ -7,6 +7,7 @@ import { db, schema } from "#/db";
 import {
   computeBudgetSpend,
   currentUtcMonth,
+  insertBudgetWithinLimit,
   listBudgetViews,
   monthRange,
   monthSchema,
@@ -254,14 +255,14 @@ describe("budgets: spend aggregation and plan cap", () => {
     expect(spend.get("b-eur")).toBe(7000);
   });
 
-  it("excludes uncategorized transactions and ignores receipt item categories", async () => {
+  it("excludes uncategorized expenses without a receipt and keeps a categorized expense whole", async () => {
     await insertAccount({ id: "bt-acc", currency: "PLN" });
     await insertCategory({ id: "bt-p", name: "Parent" });
     await insertCategory({ id: "bt-other", name: "Other" });
     await insertTransaction({ id: "t-uncat", accountId: "bt-acc", amountMinor: -999, categoryId: null });
     await insertTransaction({ id: "t-other", accountId: "bt-acc", amountMinor: -500, categoryId: "bt-other" });
-    // A receipt split onto the budgeted category must not move the spend:
-    // only transactions.category_id counts.
+    // A categorized expense counts whole toward its own category; its receipt
+    // items only refine the dashboard breakdown, so they move no budget spend.
     await db.insert(schema.receipts).values({
       id: "bt-rcpt",
       user_id: USER_ID,
@@ -281,6 +282,82 @@ describe("budgets: spend aggregation and plan cap", () => {
       [budgetInput("b-p", "bt-p")],
       db,
     );
+
+    expect(spend.get("b-p")).toBe(0);
+  });
+
+  it("counts categorized receipt items of an uncategorized expense toward their categories", async () => {
+    await insertAccount({ id: "bt-acc", currency: "PLN" });
+    await insertAccount({ id: "bt-acc-eur", currency: "EUR" });
+    await insertCategory({ id: "bt-food", name: "Food" });
+    await insertCategory({ id: "bt-fruit", name: "Fruit", parentId: "bt-food" });
+    await insertCategory({ id: "bt-home", name: "Home" });
+    await insertTransaction({ id: "t-shop", accountId: "bt-acc", amountMinor: -1000, categoryId: null });
+    await insertTransaction({ id: "t-shop-eur", accountId: "bt-acc-eur", amountMinor: -700, categoryId: null });
+    await insertTransaction({
+      id: "t-shop-old",
+      accountId: "bt-acc",
+      amountMinor: -300,
+      categoryId: null,
+      date: "2026-02-28",
+    });
+    await db.insert(schema.receipts).values([
+      { id: "bt-r-shop", user_id: USER_ID, transaction_id: "t-shop" },
+      { id: "bt-r-eur", user_id: USER_ID, transaction_id: "t-shop-eur" },
+      { id: "bt-r-old", user_id: USER_ID, transaction_id: "t-shop-old" },
+    ]);
+    await db.insert(schema.receipt_items).values([
+      { id: "bt-i-apples", receipt_id: "bt-r-shop", name: "Apples", total_price_minor: 250, category_id: "bt-fruit" },
+      { id: "bt-i-bread", receipt_id: "bt-r-shop", name: "Bread", total_price_minor: 150, category_id: "bt-food" },
+      { id: "bt-i-soap", receipt_id: "bt-r-shop", name: "Soap", total_price_minor: 400, category_id: "bt-home" },
+      { id: "bt-i-misc", receipt_id: "bt-r-shop", name: "Misc", total_price_minor: 200, category_id: null },
+      { id: "bt-i-eur", receipt_id: "bt-r-eur", name: "Pears", total_price_minor: 700, category_id: "bt-fruit" },
+      { id: "bt-i-old", receipt_id: "bt-r-old", name: "Plums", total_price_minor: 300, category_id: "bt-fruit" },
+    ]);
+
+    const spend = await computeBudgetSpend(
+      USER_ID,
+      MONTH,
+      [
+        budgetInput("b-food", "bt-food"),
+        budgetInput("b-fruit", "bt-fruit"),
+        budgetInput("b-home", "bt-home"),
+      ],
+      db,
+    );
+
+    // Food rolls up its Fruit item; the uncategorized item, the EUR account and
+    // the previous month's receipt count toward nothing here.
+    expect(spend.get("b-food")).toBe(400);
+    expect(spend.get("b-fruit")).toBe(250);
+    expect(spend.get("b-home")).toBe(400);
+  });
+
+  it("never counts receipt items of another user's expenses", async () => {
+    await insertAccount({ id: "bt-acc", currency: "PLN" });
+    await insertAccount({ id: "bt-acc-other", currency: "PLN", userId: OTHER_USER_ID });
+    await insertCategory({ id: "bt-p", name: "Parent" });
+    await insertTransaction({
+      id: "t-foreign",
+      accountId: "bt-acc-other",
+      amountMinor: -500,
+      categoryId: null,
+      userId: OTHER_USER_ID,
+    });
+    await db.insert(schema.receipts).values({
+      id: "bt-r-foreign",
+      user_id: OTHER_USER_ID,
+      transaction_id: "t-foreign",
+    });
+    await db.insert(schema.receipt_items).values({
+      id: "bt-i-foreign",
+      receipt_id: "bt-r-foreign",
+      name: "Item",
+      total_price_minor: 500,
+      category_id: "bt-p",
+    });
+
+    const spend = await computeBudgetSpend(USER_ID, MONTH, [budgetInput("b-p", "bt-p")], db);
 
     expect(spend.get("b-p")).toBe(0);
   });
@@ -434,6 +511,45 @@ describe("budgets: spend aggregation and plan cap", () => {
     }
 
     expect(await checkBudgetLimit(USER_ID, db)).toEqual({ allowed: true });
+  });
+
+  it("insertBudgetWithinLimit: concurrent creates never exceed the free cap", async () => {
+    const max = env.billing.freeMaxBudgets;
+    const attempts = max + 3;
+    for (let i = 0; i < attempts; i++) {
+      await insertCategory({ id: `bt-race-${i}`, name: `Race ${i}` });
+    }
+
+    const results = await Promise.all(
+      Array.from({ length: attempts }, (_, i) =>
+        insertBudgetWithinLimit(
+          USER_ID,
+          { categoryId: `bt-race-${i}`, currency: "PLN", limitMinor: 100 },
+          db,
+        ),
+      ),
+    );
+
+    expect(results.filter((r) => r.status === "created")).toHaveLength(max);
+    const refused = results.filter((r) => r.status === "limit_reached");
+    expect(refused).toHaveLength(attempts - max);
+    expect(refused[0]).toMatchObject({ code: "budget_limit_reached", limit: max });
+    const stored = await db
+      .select({ id: schema.budgets.id })
+      .from(schema.budgets)
+      .where(eq(schema.budgets.user_id, USER_ID));
+    expect(stored).toHaveLength(max);
+  });
+
+  it("insertBudgetWithinLimit: reports a second budget on the same category as a duplicate", async () => {
+    await insertCategory({ id: "bt-dup", name: "Dup" });
+    const input = { categoryId: "bt-dup", currency: "PLN", limitMinor: 100 };
+
+    const first = await insertBudgetWithinLimit(USER_ID, input, db);
+    const second = await insertBudgetWithinLimit(USER_ID, input, db);
+
+    expect(first.status).toBe("created");
+    expect(second).toEqual({ status: "duplicate" });
   });
 
   it("downgrade keeps existing budgets working but blocks creating more", async () => {

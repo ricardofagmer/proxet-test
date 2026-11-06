@@ -3,9 +3,10 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "#/db";
 import { scheduleBudgetAlertEvaluation } from "#/server/budget-alerts.server";
-import { checkBudgetLimit, getEntitlements } from "#/server/billing.server";
+import { getEntitlements } from "#/server/billing.server";
 import {
   currentUtcMonth,
+  insertBudgetWithinLimit,
   listBudgetViews,
   monthSchema,
 } from "#/server/budgets.server";
@@ -72,34 +73,18 @@ export const createBudget = createServerFn({ method: "POST" })
       return { error: "Category not found" };
     }
 
-    const limit = await checkBudgetLimit(userId);
-    if (!limit.allowed) {
-      return { error: limit.error, code: limit.code, limit: limit.limit };
+    const result = await insertBudgetWithinLimit(userId, data);
+    if (result.status === "limit_reached") {
+      return { error: result.error, code: result.code, limit: result.limit };
     }
-
-    const id = crypto.randomUUID();
-    // ON CONFLICT DO NOTHING turns the unique (user_id, category_id) violation
-    // into an empty RETURNING set, so a concurrent duplicate is reported the
-    // same way as a sequential one without parsing driver error codes.
-    const inserted = await db
-      .insert(schema.budgets)
-      .values({
-        id,
-        user_id: userId,
-        category_id: data.categoryId,
-        currency: data.currency,
-        limit_minor: data.limitMinor,
-      })
-      .onConflictDoNothing()
-      .returning({ id: schema.budgets.id });
-    if (inserted.length === 0) {
+    if (result.status === "duplicate") {
       return { error: "A budget already exists for this category" };
     }
 
     scheduleBudgetAlertEvaluation(userId);
 
     return {
-      id,
+      id: result.id,
       category_id: data.categoryId,
       currency: data.currency,
       limit_minor: data.limitMinor,

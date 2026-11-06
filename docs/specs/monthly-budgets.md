@@ -33,7 +33,6 @@ mental math); no retention or upgrade hook exists around planning.
 ### Non-goals (explicitly out of scope)
 
 - Past-month history or month navigation (the page shows the current month only).
-- Receipt-item category splits (`receipt_items.category_id`) in the spend sum.
 - Per-user timezone; the month is the UTC calendar month.
 - FX conversion across currencies; a budget counts only one currency.
 - A dashboard widget or any dashboard change.
@@ -134,8 +133,10 @@ spending counts, B6 monthly reset, B7 one email per budget per month, B8 free 3
 - **AC-17 (D8)** Given a budget in currency X, then only transactions whose
   account currency equals X count (`COALESCE(accounts.currency, 'PLN')`, the
   column default); transactions on a Y-currency account are ignored.
-- **AC-18 (D7)** `receipt_items.category_id` is never consulted; only
-  `transactions.category_id` counts.
+- **AC-18 (D7)** A categorized expense counts whole toward
+  `transactions.category_id`. An uncategorized expense with a receipt counts
+  each receipt item's `total_price_minor` toward that item's category (same
+  split as the dashboard); uncategorized items count toward no budget.
 - **AC-19 (D10)** Given budgets on both P and its child C1, then an expense on
   C1 counts toward both budgets.
 
@@ -185,6 +186,9 @@ spending counts, B6 monthly reset, B7 one email per budget per month, B8 free 3
 - **AC-30 (B8)** Given a free user with 3 budgets, when `createBudget` is
   called, then it returns `{ error, code: "budget_limit_reached", limit: 3 }`
   and no row is inserted; `checkBudgetLimit` mirrors `checkAccountLimit`.
+  The count and insert run in one transaction holding a `FOR UPDATE` lock on
+  the user's row (`insertBudgetWithinLimit`), so concurrent creates cannot
+  exceed the cap.
 - **AC-31 (B8)** Given a free user at the cap, when `/budgets` renders, then
   "3 of 3 budgets" usage is shown, the add action is disabled and an upsell
   linking to `/billing` is shown; below the cap the usage reads "N of 3".
@@ -457,7 +461,7 @@ present.
 | D4 | Single limit, live spend, current month only; limit edits apply to all months | versioned limits; month navigation |
 | D5 | Spent = sum of `ABS(amount_minor)` where `amount_minor < 0` | net of income/refunds |
 | D6 | Category subtree at any depth via in-memory walk with cycle guard | direct category only; recursive CTE |
-| D7 | Only `transactions.category_id` counts | receipt-item splits (dashboard Sankey behavior) |
+| D7 | Same split as the dashboard: categorized expense counts whole; uncategorized expense with a receipt counts its categorized items | only `transactions.category_id` (original choice; budgets disagreed with the dashboard) |
 | D8 | Budget has a currency; only matching-currency accounts count; picker from accounts; empty state without accounts | FX conversion; currency-less budgets |
 | D9 | UTC calendar month; explicit `month` parameter everywhere | user timezone; implicit "now" |
 | D10 | Overlapping parent/child budgets allowed, expense counts toward both | forbid overlap; count once |
@@ -474,9 +478,10 @@ present.
 
 ## 6. Known gaps and risks
 
-- Receipt-item splits are ignored; a receipt whose items are categorized
-  differently from the parent transaction is attributed to the transaction's
-  category only, unlike the dashboard Sankey (`analytics.server.ts:215-234`).
+- As on the dashboard, a receipt's items are not capped at the transaction
+  amount; an inaccurate scan can over- or under-count an uncategorized expense.
+- Changing a receipt item's category re-evaluates alerts
+  (`updateReceiptItems`); deleting a receipt lowers spend, which never alerts.
 - UTC month differs from the user's local month near midnight boundaries.
 - `accounts.currency` is nullable with default `PLN` (`schema.ts:91`); the spec
   coalesces null to `PLN` (see Open Questions).

@@ -1,6 +1,7 @@
-import { and, asc, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
+import { and, asc, count, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db as defaultDb, schema } from "#/db";
+import { budgetLimitFor, getEntitlements, type BudgetLimitResult } from "#/server/billing.server";
 
 //
 // Budget domain logic: month helpers and live spend aggregation. Server-only —
@@ -71,6 +72,10 @@ export function collectCategorySubtree(
  * expenses count (amount_minor < 0); income and refunds are excluded rather
  * than netted. A budget on a parent includes all its subcategories, and only
  * transactions on accounts in the budget's currency count.
+ *
+ * Same split as the dashboard: a categorized expense counts whole toward its
+ * category; an uncategorized expense with a scanned receipt counts each
+ * categorized receipt item toward that item's category.
  */
 export async function computeBudgetSpend(
   userId: string,
@@ -128,10 +133,47 @@ export async function computeBudgetSpend(
     )
     .groupBy(schema.transactions.category_id, currencyExpression);
 
+  const receiptItemRows = await db
+    .select({
+      categoryId: schema.receipt_items.category_id,
+      currency: currencyExpression,
+      spent: sql<number>`COALESCE(SUM(${schema.receipt_items.total_price_minor}), 0)`.mapWith(
+        Number,
+      ),
+    })
+    .from(schema.transactions)
+    .innerJoin(
+      schema.accounts,
+      eq(schema.transactions.account_id, schema.accounts.id),
+    )
+    .innerJoin(
+      schema.receipts,
+      and(
+        eq(schema.receipts.transaction_id, schema.transactions.id),
+        eq(schema.receipts.user_id, userId),
+      ),
+    )
+    .innerJoin(
+      schema.receipt_items,
+      eq(schema.receipt_items.receipt_id, schema.receipts.id),
+    )
+    .where(
+      and(
+        eq(schema.transactions.user_id, userId),
+        sql`${schema.transactions.amount_minor} < 0`,
+        isNull(schema.transactions.category_id),
+        isNotNull(schema.receipt_items.category_id),
+        gte(schema.transactions.date, start),
+        lt(schema.transactions.date, end),
+      ),
+    )
+    .groupBy(schema.receipt_items.category_id, currencyExpression);
+
+  const allSpendRows = [...spendRows, ...receiptItemRows];
   for (const budget of budgets) {
     const subtree = collectCategorySubtree(budget.category_id, childrenByParent);
     let spent = 0;
-    for (const row of spendRows) {
+    for (const row of allSpendRows) {
       if (
         row.categoryId !== null &&
         row.currency === budget.currency &&
@@ -197,5 +239,61 @@ export async function listBudgetViews(
       remaining_minor: row.limit_minor - spent,
       over_budget: spent > row.limit_minor,
     };
+  });
+}
+
+export interface NewBudgetInput {
+  categoryId: string;
+  currency: string;
+  limitMinor: number;
+}
+
+export type InsertBudgetResult =
+  | { status: "created"; id: string }
+  | { status: "duplicate" }
+  | (Extract<BudgetLimitResult, { allowed: false }> & { status: "limit_reached" });
+
+/**
+ * Inserts a budget if the plan allows one more. The count and the insert run
+ * in one transaction holding a lock on the user's row, so two concurrent
+ * requests cannot both see "2 of 3" and create a 4th budget.
+ */
+export async function insertBudgetWithinLimit(
+  userId: string,
+  input: NewBudgetInput,
+  db: Db = defaultDb,
+): Promise<InsertBudgetResult> {
+  const { maxBudgets } = await getEntitlements(userId, db);
+  return db.transaction(async (tx) => {
+    await tx
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .for("update");
+
+    if (maxBudgets !== null) {
+      const rows = await tx
+        .select({ count: count() })
+        .from(schema.budgets)
+        .where(eq(schema.budgets.user_id, userId));
+      const limit = budgetLimitFor(maxBudgets, rows[0]?.count ?? 0);
+      if (!limit.allowed) return { status: "limit_reached", ...limit };
+    }
+
+    const id = crypto.randomUUID();
+    // ON CONFLICT DO NOTHING turns the unique (user_id, category_id) violation
+    // into an empty RETURNING set, so a duplicate needs no driver error parsing.
+    const inserted = await tx
+      .insert(schema.budgets)
+      .values({
+        id,
+        user_id: userId,
+        category_id: input.categoryId,
+        currency: input.currency,
+        limit_minor: input.limitMinor,
+      })
+      .onConflictDoNothing()
+      .returning({ id: schema.budgets.id });
+    return inserted.length === 0 ? { status: "duplicate" } : { status: "created", id };
   });
 }

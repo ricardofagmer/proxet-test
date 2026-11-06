@@ -122,9 +122,24 @@ export type BudgetLimitResult =
       error: string;
     };
 
+/** Whether one more budget fits: null maxBudgets means unlimited (Pro). */
+export function budgetLimitFor(
+  maxBudgets: number | null,
+  existingBudgets: number,
+): BudgetLimitResult {
+  if (maxBudgets === null || existingBudgets < maxBudgets) return { allowed: true };
+  return {
+    allowed: false,
+    code: "budget_limit_reached",
+    limit: maxBudgets,
+    error: `Free plan is limited to ${maxBudgets} budgets. Upgrade to Pro for unlimited budgets.`,
+  };
+}
+
 /** Gate for budget creation: free plan allows up to freeMaxBudgets. Same
  * downgrade rule as accounts — existing budgets above the limit keep working
- * and alerting; only creating new ones is blocked. */
+ * and alerting; only creating new ones is blocked. Creation itself goes
+ * through insertBudgetWithinLimit, which repeats this count under a lock. */
 export async function checkBudgetLimit(
   userId: string,
   db: Db = defaultDb,
@@ -135,15 +150,7 @@ export async function checkBudgetLimit(
     .select({ count: count() })
     .from(schema.budgets)
     .where(eq(schema.budgets.user_id, userId));
-  if ((rows[0]?.count ?? 0) >= entitlements.maxBudgets) {
-    return {
-      allowed: false,
-      code: "budget_limit_reached",
-      limit: entitlements.maxBudgets,
-      error: `Free plan is limited to ${entitlements.maxBudgets} budgets. Upgrade to Pro for unlimited budgets.`,
-    };
-  }
-  return { allowed: true };
+  return budgetLimitFor(entitlements.maxBudgets, rows[0]?.count ?? 0);
 }
 
 // ---------------------------------------------------------------------------
