@@ -65,7 +65,10 @@ export function BarsView({
             fontSize={12}
             formatter={(name: unknown) => {
               const datum = data.find((candidate) => candidate.name === name);
-              return datum ? formatAmountAndShare(datum, currency) : "";
+              // Recharts wraps SVG labels at spaces when a wider font (e.g. on
+              // Linux) overflows its measured width; non-breaking spaces keep
+              // "165.50 PLN · 100%" on one line.
+              return datum ? formatAmountAndShare(datum, currency).replace(/ /g, "\u00A0") : "";
             }}
           />
         </Bar>
