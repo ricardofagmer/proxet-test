@@ -111,6 +111,14 @@ export async function collectUserExport(userId: string) {
     .from(schema.subscriptions)
     .where(eq(schema.subscriptions.user_id, userId))
     .limit(1);
+  const budgets = await db
+    .select()
+    .from(schema.budgets)
+    .where(eq(schema.budgets.user_id, userId));
+  const budgetAlerts = await db
+    .select()
+    .from(schema.budget_alerts)
+    .where(eq(schema.budget_alerts.user_id, userId));
 
   return {
     user,
@@ -123,6 +131,8 @@ export async function collectUserExport(userId: string) {
     receiptItems,
     aiUsage,
     subscription: subscription ?? null,
+    budgets,
+    budgetAlerts,
   };
 }
 
@@ -158,6 +168,8 @@ export async function buildExportZip(userId: string): Promise<Uint8Array> {
         })),
         aiUsage: data.aiUsage,
         subscription: data.subscription,
+        budgets: data.budgets,
+        budgetAlerts: data.budgetAlerts,
       },
       null,
       2,
@@ -251,6 +263,28 @@ export async function buildExportZip(userId: string): Promise<Uint8Array> {
       ]),
     ),
   );
+  files["budgets.csv"] = strToU8(
+    toCsv(
+      [
+        "id",
+        "category",
+        "currency",
+        "limit",
+        "limit_minor",
+        "created_at",
+        "updated_at",
+      ],
+      data.budgets.map((b) => [
+        b.id,
+        data.categories.find((c) => c.id === b.category_id)?.name,
+        b.currency,
+        formatMinor(b.limit_minor),
+        b.limit_minor,
+        b.created_at.toISOString(),
+        b.updated_at.toISOString(),
+      ]),
+    ),
+  );
 
   // Receipt images: stored uncompressed (JPEG/PNG don't compress further).
   for (const receipt of data.receipts) {
@@ -315,6 +349,13 @@ export async function hardDeleteUser(userId: string): Promise<void> {
     await tx
       .delete(schema.receipts)
       .where(eq(schema.receipts.user_id, userId));
+    // Alerts reference budgets, and budgets reference categories.
+    await tx
+      .delete(schema.budget_alerts)
+      .where(eq(schema.budget_alerts.user_id, userId));
+    await tx
+      .delete(schema.budgets)
+      .where(eq(schema.budgets.user_id, userId));
     await tx
       .delete(schema.transactions)
       .where(eq(schema.transactions.user_id, userId));

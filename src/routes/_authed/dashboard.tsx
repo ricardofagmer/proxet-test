@@ -1,16 +1,16 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useId, useState, useMemo } from "react";
 import { m } from "#/paraglide/messages";
 import { Select, SelectItem } from "#/components/ui/select";
-import { formatMinor } from "#/lib/money";
 import {
   getDashboardSummary,
   getSpendingSankey,
 } from "#/server/analytics.functions";
 import { getAccounts } from "#/server/accounts.functions";
-import { Sankey, Tooltip, ResponsiveContainer, useChartWidth, Layer, Rectangle } from "recharts";
+import { SpendingByCategoryCard } from "#/components/spending-charts/spending-by-category-card";
+import { formatAmount, type CurrencyLabel } from "#/components/spending-charts/category-data";
 import { format } from "date-fns";
 
 
@@ -43,6 +43,15 @@ function getPeriodDates(preset: PeriodPreset): { from: string; to: string } {
   }
 
   return { from, to };
+}
+
+/**
+ * The one currency code the totals are in. With no data the default account
+ * currency is shown; with several currencies no code is truthful, so null.
+ */
+function toCurrencyLabel(currencies: string[]): CurrencyLabel {
+  if (currencies.length === 0) return m.analytics_currency();
+  return currencies.length === 1 ? (currencies[0] ?? null) : null;
 }
 
 // --- Summary Card Component ---
@@ -133,12 +142,14 @@ function AccountFilter({
   value: string;
   onChange: (id: string) => void;
 }) {
+  const selectId = useId();
   return (
     <div className="flex items-center gap-2">
-      <label className="text-sm font-medium text-muted-foreground">
+      <label htmlFor={selectId} className="text-sm font-medium text-muted-foreground">
         {m.account_filter()}:
       </label>
       <Select
+        id={selectId}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="h-8 w-auto px-2 text-xs"
@@ -154,126 +165,13 @@ function AccountFilter({
   );
 }
 
-// --- Sankey Chart Component ---
-
-function SpendingSankeyChart({
-  nodes,
-  links,
-}: {
-  nodes: Array<{ name: string; color?: string }>;
-  links: Array<{ source: number; target: number; value: number }>;
-}) {
-  if (nodes.length === 0 || links.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-80 text-center">
-        <p className="text-sm text-muted-foreground">{m.analytics_no_data()}</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          {m.analytics_no_data_desc()}
-        </p>
-      </div>
-    );
-  }
-
-  const sankeyData = { nodes, links };
-
-  return (
-    <ResponsiveContainer width="100%" height={500}>
-      <Sankey
-        data={sankeyData}
-        dataKey="value"
-        nameKey="name"
-        nodeWidth={12}
-        nodePadding={12}
-        align="justify"
-        node={({ x, y, width, height, index, payload }) => {
-          const containerWidth = useChartWidth();
-          const nodeName = (payload as { name?: string }).name;
-          const nodeColor = (payload as { color?: string }).color;
-          const depth = (payload as { depth?: number }).depth;
-          if (containerWidth == null) return null;
-          // Leftmost column (depth 0): label on the left; others: label on the right
-          const isLeftColumn = depth === 0;
-          const textX = isLeftColumn ? x - 6 : x + width + 6;
-          const textAnchor = isLeftColumn ? "end" : "start";
-          return (
-            <Layer key={`CustomNode${index}`}>
-              <Rectangle
-                x={x}
-                y={y}
-                width={width}
-                height={height}
-                fill={nodeColor || "#6366f1"}
-                stroke="none"
-                cursor="pointer"
-              />
-              {nodeName && (
-                <text
-                  textAnchor={textAnchor}
-                  x={textX}
-                  y={y + height / 2}
-                  fill="#0f172a"
-                  fontSize={11}
-                  fontWeight={500}
-                >
-                  {nodeName}
-                </text>
-              )}
-            </Layer>
-          );
-        }}
-        link={{
-          fillOpacity: 0.35,
-          cursor: "pointer",
-        }}
-        margin={{ top: 20, right: 120, bottom: 20, left: 50 }}
-      >
-        <Tooltip
-          content={({ active, payload }) => {
-            if (active && payload && payload.length) {
-              const data = payload[0]?.payload;
-              if (data?.source !== undefined && typeof data.source === "number") {
-                const sourceNode = nodes[data.source];
-                const targetNode = nodes[data.target];
-                return (
-                  <div className="island-shell rounded-lg p-3 shadow-lg border border-line/50">
-                    <p className="text-xs font-medium mb-1">
-                      {sourceNode?.name} → {targetNode?.name}
-                    </p>
-                    <p className="text-sm font-bold tabular-nums">
-                      {formatMinor(data.value)} {m.analytics_currency()}
-                    </p>
-                  </div>
-                );
-              }
-              const nodeData = data as { name?: string; color?: string } | undefined;
-              const nodeLinks = links.filter(
-                (l) => l.source === data?.index || l.target === data?.index,
-              );
-              const totalValue = nodeLinks.reduce((sum, l) => sum + l.value, 0);
-              return (
-                <div className="island-shell rounded-lg p-3 shadow-lg border border-line/50">
-                  <p className="text-sm font-bold">{nodeData?.name}</p>
-                  {totalValue > 0 && (
-                    <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-                      {formatMinor(totalValue)} {m.analytics_currency()}
-                    </p>
-                  )}
-                </div>
-              );
-            }
-            return null;
-          }}
-        />
-      </Sankey>
-    </ResponsiveContainer>
-  );
-}
-
 // --- Top Categories List ---
 
 function TopCategoriesList({
   categories,
+  currency,
 }: {
+  currency: CurrencyLabel;
   categories: Array<{
     categoryId: string;
     categoryName: string;
@@ -300,7 +198,7 @@ function TopCategoriesList({
             />
             <span className="flex-1 text-sm truncate">{cat.categoryName}</span>
             <span className="text-sm font-medium tabular-nums">
-              {formatMinor(cat.totalSpent)} {m.analytics_currency()}
+              {formatAmount(cat.totalSpent, currency)}
             </span>
           </div>
         ))}
@@ -346,6 +244,8 @@ function Dashboard() {
   });
 
   const isLoading = summaryLoading || sankeyLoading;
+  const currencies = summary?.currencies ?? [];
+  const currencyLabel = toCurrencyLabel(currencies);
 
   return (
     <div className="min-h-screen">
@@ -383,40 +283,42 @@ function Dashboard() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <SummaryCard
                 title={m.analytics_total_income()}
-                value={`${formatMinor(summary?.totalIncome ?? 0)} ${m.analytics_currency()}`}
+                value={formatAmount(summary?.totalIncome ?? 0, currencyLabel)}
                 accent="income"
               />
               <SummaryCard
                 title={m.analytics_total_expenses()}
-                value={`${formatMinor(summary?.totalExpenses ?? 0)} ${m.analytics_currency()}`}
+                value={formatAmount(summary?.totalExpenses ?? 0, currencyLabel)}
                 accent="expense"
               />
               <SummaryCard
                 title={m.analytics_net()}
-                value={`${formatMinor(summary?.net ?? 0)} ${m.analytics_currency()}`}
+                value={formatAmount(summary?.net ?? 0, currencyLabel)}
                 accent="net"
               />
             </div>
+            {currencies.length > 1 ? (
+              <p role="note" className="-mt-4 text-sm text-muted-foreground">
+                {m.analytics_mixed_currencies({ currencies: currencies.join(", ") })}
+              </p>
+            ) : null}
 
             {/* Charts Row */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Sankey Chart */}
-              <div className="lg:col-span-2 island-shell rounded-xl p-4">
-                <h2 className="text-sm font-semibold mb-1">
-                  {m.analytics_spending_sankey()}
-                </h2>
-                <p className="text-xs text-muted-foreground mb-4">
-                  {m.analytics_spending_sankey_desc()}
-                </p>
-                <SpendingSankeyChart
-                  nodes={sankeyData?.nodes ?? []}
-                  links={sankeyData?.links ?? []}
-                />
-              </div>
+              <SpendingByCategoryCard
+                className="lg:col-span-2"
+                nodes={sankeyData?.nodes ?? []}
+                links={sankeyData?.links ?? []}
+                filter={filterParams}
+                currency={currencyLabel}
+              />
 
               {/* Top Categories */}
               <div>
-                <TopCategoriesList categories={summary?.topCategories ?? []} />
+                <TopCategoriesList
+                  categories={summary?.topCategories ?? []}
+                  currency={currencyLabel}
+                />
               </div>
             </div>
 

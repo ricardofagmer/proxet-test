@@ -7,6 +7,7 @@ import { m } from "#/paraglide/messages";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import LocaleSwitcher from "#/components/LocaleSwitcher";
 
 
 export const Route = createFileRoute("/login")({
@@ -129,6 +130,10 @@ function LoginPage() {
                 {m.create_one()}
               </Link>
             </p>
+          </div>
+
+          <div className="mt-4 flex justify-center">
+            <LocaleSwitcher id="login-locale" />
           </div>
 
           <nav className="mt-4 flex justify-center gap-4 text-xs text-muted-foreground">

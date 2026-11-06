@@ -491,8 +491,9 @@ function ReceiptScanPage() {
   const topCategories = categories.filter((c) => c.parent_id === null);
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-line/50 bg-header-bg/80 backdrop-blur-sm">
+    <div className="relative isolate min-h-screen">
+      <div className="glass-backdrop" aria-hidden="true" />
+      <header className="border-b border-line/50 bg-header-bg/60 backdrop-blur-md">
         <div className="page-wrap py-4">
           <h1 className="text-xl font-bold display-title">
             {m.scan_receipt_title()}
@@ -501,8 +502,9 @@ function ReceiptScanPage() {
       </header>
 
       <main className="page-wrap py-8">
-        {/* Upload zone */}
-        {!result && !saved && (
+        {/* Upload zone; after a save it stays up, above the success message,
+            so the next receipt can be added without leaving the page. */}
+        {(!result || saved) && (
           <div
             data-testid="drop-zone"
             onDragOver={(e) => {
@@ -511,10 +513,20 @@ function ReceiptScanPage() {
             }}
             onDragLeave={() => setDragActive(false)}
             onDrop={onDrop}
-            className={`island-shell rounded-xl p-10 text-center border-2 border-dashed transition-colors ${
+            className={`glass-panel rounded-2xl p-10 text-center border-2 border-dashed transition-colors ${
               dragActive ? "border-primary bg-accent/40" : "border-line/60"
             }`}
           >
+            {saved && (
+              <div className="mb-4">
+                <h2 className="text-base font-semibold">
+                  {m.scan_add_another_title()}
+                </h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {m.scan_add_another_hint()}
+                </p>
+              </div>
+            )}
             <p className="text-sm text-muted-foreground mb-3">
               {m.scan_drag_drop()}
             </p>
@@ -582,10 +594,13 @@ function ReceiptScanPage() {
         )}
 
         {/* Saved confirmation */}
-        {saved && (
-          <div className="mt-8 p-4 rounded-md bg-emerald-500/10 text-emerald-600 text-sm">
-            <p className="font-semibold mb-1">Receipt saved successfully!</p>
-            <p>Transaction created with {items.length} item(s).</p>
+        {saved && !uploading && (
+          <div
+            className="glass-panel glass-panel-success mt-6 p-4 rounded-2xl text-emerald-700 dark:text-emerald-300 text-sm"
+            role="status"
+          >
+            <p className="font-semibold mb-1">{m.scan_saved_title()}</p>
+            <p>{m.scan_saved_items({ count: items.length })}</p>
           </div>
         )}
 
@@ -594,7 +609,7 @@ function ReceiptScanPage() {
           <div className="mt-8 space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Image preview */}
-              <div className="island-shell rounded-xl p-4">
+              <div className="glass-panel rounded-2xl p-4">
                 <h2 className="text-base font-semibold mb-3">
                   {m.scan_image_preview()}
                 </h2>
@@ -608,7 +623,7 @@ function ReceiptScanPage() {
               </div>
 
               {/* Extracted data with editing */}
-              <div className="island-shell rounded-xl p-4">
+              <div className="glass-panel rounded-2xl p-4">
                 <h2 className="text-base font-semibold mb-4">
                   {m.scan_extracted_data()}
                 </h2>
@@ -823,7 +838,7 @@ function ReceiptScanPage() {
             </div>
 
             {/* Transaction matching section */}
-            <div className="island-shell rounded-xl p-4">
+            <div className="glass-panel rounded-2xl p-4">
               <h2 className="text-base font-semibold mb-3">
                 {m.scan_link_transaction()}
               </h2>

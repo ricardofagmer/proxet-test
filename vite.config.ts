@@ -16,7 +16,9 @@ const config = defineConfig({
     paraglideVitePlugin({
       project: "./project.inlang",
       outdir: "./src/paraglide",
-      strategy: ["url", "baseLocale"],
+      // Cookie, not URL prefixes: routes, links and server-function URLs stay
+      // locale-free. First visit follows the browser's Accept-Language.
+      strategy: ["cookie", "preferredLanguage", "baseLocale"],
     }),
     tailwindcss(),
     // Unit tests import *.server.ts modules directly (in-memory DB); import

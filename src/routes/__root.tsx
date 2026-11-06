@@ -6,6 +6,8 @@ import {
   Link,
 } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { HomeIcon } from "lucide-react";
+import { SimulatedEmailNotifier } from "#/components/simulated-email-notifier";
 import { useState, useCallback, lazy, Suspense } from "react";
 
 const Sidebar = lazy(() =>
@@ -178,6 +180,7 @@ function RootDocument() {
               {/* Top bar */}
               <div className="border-b border-line/50 bg-header-bg/80 backdrop-blur-sm sticky top-0 z-20">
                 <div className="page-wrap py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
                   {/* Hamburger (mobile only) */}
                   <button
                     onClick={handleSidebarToggle}
@@ -198,6 +201,16 @@ function RootDocument() {
                       />
                     </svg>
                   </button>
+                  {/* Home: always visible so any page is one click from the dashboard */}
+                  <Link
+                    to="/dashboard"
+                    className="h-9 px-3 flex items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+                    aria-label={m.nav_home()}
+                  >
+                    <HomeIcon className="size-4" aria-hidden="true" />
+                    <span>{m.nav_home()}</span>
+                  </Link>
+                  </div>
 
                   <div className="flex items-center gap-3">
                     <span className="text-sm text-muted-foreground">
@@ -218,6 +231,7 @@ function RootDocument() {
 
               {/* Page content */}
               <Outlet />
+              <SimulatedEmailNotifier />
             </div>
           </div>
         ) : (

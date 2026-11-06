@@ -1,44 +1,42 @@
-// Locale switcher refs:
-// - Paraglide docs: https://inlang.com/m/gerre34r/library-inlang-paraglideJs
-// - Router example: https://github.com/TanStack/router/tree/main/examples/react/i18n-paraglide#switching-locale
-import { getLocale, locales, setLocale } from "#/paraglide/runtime";
+import type { ReactElement } from "react";
+import { getLocale, locales, setLocale, isLocale } from "#/paraglide/runtime";
 import { m } from "#/paraglide/messages";
 
-export default function ParaglideLocaleSwitcher() {
+// Each language is shown in its own language ("Polski", "Español"), the
+// convention for language pickers, so no translated names are needed.
+function nativeLanguageName(locale: string): string {
+  try {
+    const name = new Intl.DisplayNames([locale], { type: "language" }).of(locale);
+    return name ? name.charAt(0).toLocaleUpperCase(locale) + name.slice(1) : locale;
+  } catch {
+    return locale;
+  }
+}
+
+/** Language picker. Changing it stores the choice in a cookie and reloads the page. */
+export default function LocaleSwitcher({ id = "locale-switcher" }: { id?: string }): ReactElement {
   const currentLocale = getLocale();
 
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: "0.5rem",
-        alignItems: "center",
-        color: "inherit",
-      }}
-      aria-label={m.language_label()}
-    >
-      <span style={{ opacity: 0.85 }}>{m.current_locale({ locale: currentLocale })}</span>
-      <div style={{ display: "flex", gap: "0.25rem" }}>
+    <div className="flex items-center gap-2 text-sm">
+      <label htmlFor={id} className="text-muted-foreground">
+        {m.language_label()}
+      </label>
+      <select
+        id={id}
+        value={currentLocale}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (isLocale(next)) setLocale(next);
+        }}
+        className="flex-1 min-w-0 rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         {locales.map((locale) => (
-          <button
-            key={locale}
-            onClick={() => setLocale(locale)}
-            aria-pressed={locale === currentLocale}
-            style={{
-              cursor: "pointer",
-              padding: "0.35rem 0.75rem",
-              borderRadius: "999px",
-              border: "1px solid #d1d5db",
-              background: locale === currentLocale ? "#0f172a" : "transparent",
-              color: locale === currentLocale ? "#f8fafc" : "inherit",
-              fontWeight: locale === currentLocale ? 700 : 500,
-              letterSpacing: "0.01em",
-            }}
-          >
-            {locale.toUpperCase()}
-          </button>
+          <option key={locale} value={locale}>
+            {nativeLanguageName(locale)}
+          </option>
         ))}
-      </div>
+      </select>
     </div>
   );
 }

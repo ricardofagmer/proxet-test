@@ -369,4 +369,28 @@ test.describe("Receipt Scanning", () => {
     const saveBtn = page.getByTestId("save-receipt-btn");
     expect(await saveBtn.isDisabled()).toBe(false);
   });
+
+  test("offers to add another receipt above the success message after saving", async ({ page }) => {
+    await navigateToScanReceipt(page);
+    await page.getByTestId("file-input").setInputFiles(fixturePath("receipt-test.png"));
+    await expect(page.getByTestId("store-name-input")).toHaveValue("FAKE_STORE");
+    await page.getByTestId("account-select").selectOption({ index: 1 });
+    await page.getByTestId("save-receipt-btn").click();
+
+    const addAnother = page.getByRole("heading", { name: "Add another receipt" });
+    const success = page.getByRole("status").filter({ hasText: "Receipt saved successfully" });
+    await expect(addAnother).toBeVisible();
+    await expect(success).toBeVisible();
+
+    // The add-another zone is rendered before (above) the success message.
+    const addAnotherBox = await addAnother.boundingBox();
+    const successBox = await success.boundingBox();
+    expect(addAnotherBox && successBox && addAnotherBox.y < successBox.y).toBe(true);
+
+    // Scanning the next receipt works without leaving the page.
+    await page.getByTestId("file-input").setInputFiles(fixturePath("receipt-test.png"));
+    await expect(page.getByTestId("store-name-input")).toHaveValue("FAKE_STORE");
+    await expect(success).toBeHidden();
+    await expect(addAnother).toBeHidden();
+  });
 });

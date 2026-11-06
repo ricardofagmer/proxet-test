@@ -86,6 +86,21 @@ async function seedFullUser(userId: string) {
     plan: "free",
     status: "active",
   });
+  await db.insert(schema.budgets).values({
+    id: `${userId}-budget`,
+    user_id: userId,
+    category_id: `${userId}-cat`,
+    currency: "PLN",
+    limit_minor: 50000,
+  });
+  await db.insert(schema.budget_alerts).values({
+    id: `${userId}-alert`,
+    budget_id: `${userId}-budget`,
+    user_id: userId,
+    month: "2026-07",
+    status: "sent",
+    sent_at: new Date("2026-07-02T08:00:00Z"),
+  });
   return { imageKey };
 }
 
@@ -125,6 +140,20 @@ describe("compliance: data export", () => {
     expect(json.receipts[0].image_file).toBe(`receipts/${userId}-rcpt.jpg`);
     expect(json.categorizationRules).toHaveLength(1);
     expect(json.subscription.plan).toBe("free");
+    expect(json.budgets).toHaveLength(1);
+    expect(json.budgets[0]).toMatchObject({
+      id: `${userId}-budget`,
+      category_id: `${userId}-cat`,
+      currency: "PLN",
+      limit_minor: 50000,
+    });
+    expect(json.budgetAlerts).toHaveLength(1);
+    expect(json.budgetAlerts[0]).toMatchObject({
+      id: `${userId}-alert`,
+      budget_id: `${userId}-budget`,
+      month: "2026-07",
+      status: "sent",
+    });
 
     const txnCsv = strFromU8(files["transactions.csv"]);
     expect(txnCsv).toContain('"Grocery store"');
@@ -134,6 +163,15 @@ describe("compliance: data export", () => {
     expect(strFromU8(files["accounts.csv"])).toContain('"Checking"');
     expect(strFromU8(files["categories.csv"])).toContain('"Groceries"');
     expect(strFromU8(files["categorization_rules.csv"])).toContain('"grocery"');
+
+    const budgetsCsv = strFromU8(files["budgets.csv"]);
+    const [budgetsHeader, budgetRow] = budgetsCsv.split("\n");
+    expect(budgetsHeader).toBe(
+      '"id","category","currency","limit","limit_minor","created_at","updated_at"',
+    );
+    expect(budgetRow).toContain(
+      `"${userId}-budget","Groceries","PLN","500.00","50000",`,
+    );
 
     expect(Array.from(files[`receipts/${userId}-rcpt.jpg`])).toEqual([
       0xff, 0xd8, 0xff, 0x42,
@@ -160,6 +198,9 @@ describe("compliance: account hard delete", () => {
       db.select().from(schema.receipt_items).where(eq(schema.receipt_items.receipt_id, `${userId}-rcpt`)),
       db.select().from(schema.ai_usage).where(eq(schema.ai_usage.user_id, userId)),
       db.select().from(schema.subscriptions).where(eq(schema.subscriptions.user_id, userId)),
+      db.select().from(schema.budgets).where(eq(schema.budgets.user_id, userId)),
+      db.select().from(schema.budget_alerts).where(eq(schema.budget_alerts.user_id, userId)),
+      db.select().from(schema.budget_alerts).where(eq(schema.budget_alerts.budget_id, `${userId}-budget`)),
     ]);
     for (const rows of remaining) {
       expect.soft(rows).toHaveLength(0);

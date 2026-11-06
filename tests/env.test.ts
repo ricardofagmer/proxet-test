@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DEV_SESSION_SECRET, validateEnv } from "#/server/env";
+import {
+  DEV_SESSION_SECRET,
+  GEMINI_BASE_URL,
+  GEMINI_DEFAULT_MODEL,
+  validateEnv,
+} from "#/server/env";
 
 const STRONG_SECRET = "a".repeat(48);
 
@@ -123,6 +128,38 @@ describe("env validation", () => {
       validateEnv({ AI_BASE_URL: "http://llm:8080/v1" }).ai.provider,
     ).toBe("llamacpp");
     expect(validateEnv({}).ai.provider).toBe("openrouter");
+  });
+
+  it("configures Gemini from its own variables", () => {
+    const explicit = validateEnv({
+      AI_PROVIDER: "gemini",
+      GEMINI_API_KEY: "g-key",
+      // An existing OpenRouter setup must not leak into the Gemini config.
+      AI_API_KEY: "openrouter-key",
+      AI_BASE_URL: "https://openrouter.ai/api/v1",
+      AI_MODEL: "openai/gpt-5-mini",
+    }).ai;
+    expect(explicit.provider).toBe("gemini");
+    expect(explicit.apiKey).toBe("g-key");
+    expect(explicit.baseURL).toBe(GEMINI_BASE_URL);
+    expect(explicit.model).toBe(GEMINI_DEFAULT_MODEL);
+
+    // a lone GEMINI_API_KEY implies Gemini; GEMINI_MODEL overrides the default
+    const inferred = validateEnv({ GEMINI_API_KEY: "g-key", GEMINI_MODEL: "gemini-x" }).ai;
+    expect(inferred.provider).toBe("gemini");
+    expect(inferred.model).toBe("gemini-x");
+
+    // Google's SDK variable names work as fallbacks; GEMINI_API_KEY wins.
+    const google = validateEnv({ GOOGLE_API_KEY: "google-key" }).ai;
+    expect(google.provider).toBe("gemini");
+    expect(google.apiKey).toBe("google-key");
+    expect(
+      validateEnv({ GOOGLE_GENERATIVE_AI_API_KEY: "sdk-key" }).ai.apiKey,
+    ).toBe("sdk-key");
+    expect(
+      validateEnv({ GEMINI_API_KEY: "g-key", GOOGLE_API_KEY: "google-key" }).ai
+        .apiKey,
+    ).toBe("g-key");
   });
 
   it("validates AI quota and spend cap config", () => {

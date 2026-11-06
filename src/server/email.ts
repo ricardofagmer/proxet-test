@@ -22,12 +22,43 @@ export function getCapturedEmails(to?: string): EmailMessage[] {
   return to ? capturedEmails.filter((e) => e.to === to) : [...capturedEmails];
 }
 
+export interface SimulatedEmail extends EmailMessage {
+  id: number;
+  sentAt: string;
+}
+
+// Dev-only outbox for the "console" provider, so the signed-in user can see
+// simulated emails in the UI instead of digging through the server log.
+// Bounded so a long dev session cannot grow it without limit.
+const SIMULATED_OUTBOX_LIMIT = 100;
+const simulatedOutbox: SimulatedEmail[] = [];
+let nextSimulatedEmailId = 1;
+
+function recordSimulatedEmail(message: EmailMessage): void {
+  simulatedOutbox.push({
+    ...message,
+    id: nextSimulatedEmailId++,
+    sentAt: new Date().toISOString(),
+  });
+  if (simulatedOutbox.length > SIMULATED_OUTBOX_LIMIT) simulatedOutbox.shift();
+}
+
+/** Id of the newest simulated email (0 when none), used as a polling cursor. */
+export function getLatestSimulatedEmailId(): number {
+  return nextSimulatedEmailId - 1;
+}
+
+export function getSimulatedEmailsSince(to: string, afterId: number): SimulatedEmail[] {
+  return simulatedOutbox.filter((email) => email.to === to && email.id > afterId);
+}
+
 export async function sendEmail(message: EmailMessage): Promise<void> {
   switch (env.email.provider) {
     case "test":
       capturedEmails.push(message);
       return;
     case "console":
+      recordSimulatedEmail(message);
       // Deliberately raw console output, not the structured logger: printing
       // the full body (with its verification/reset link) to the dev terminal
       // IS the delivery mechanism for this provider, and it never runs in
