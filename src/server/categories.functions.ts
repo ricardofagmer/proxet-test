@@ -300,6 +300,35 @@ export const deleteCategory = createServerFn({ method: "POST" })
       .set({ category_id: null })
       .where(inArray(schema.receipt_items.category_id, allIdsToDelete));
 
+    // Budgets belong to their category and are deleted with it, never moved
+    // to the reassignment target. There are no ON DELETE cascades, so alerts
+    // go before budgets and budgets before the categories they reference.
+    const budgetIdsToDelete = db
+      .select({ id: schema.budgets.id })
+      .from(schema.budgets)
+      .where(
+        and(
+          inArray(schema.budgets.category_id, allIdsToDelete),
+          eq(schema.budgets.user_id, userId),
+        ),
+      );
+    await db
+      .delete(schema.budget_alerts)
+      .where(
+        and(
+          inArray(schema.budget_alerts.budget_id, budgetIdsToDelete),
+          eq(schema.budget_alerts.user_id, userId),
+        ),
+      );
+    await db
+      .delete(schema.budgets)
+      .where(
+        and(
+          inArray(schema.budgets.category_id, allIdsToDelete),
+          eq(schema.budgets.user_id, userId),
+        ),
+      );
+
     // Delete categorization_rules that reference any of these categories
     await db
       .delete(schema.categorization_rules)

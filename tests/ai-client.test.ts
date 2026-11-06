@@ -142,6 +142,35 @@ describe("ai client (callAI)", () => {
     });
   });
 
+  it("sends Gemini a request its OpenAI-compatible endpoint accepts", async () => {
+    Object.assign(env.ai, {
+      provider: "gemini",
+      apiKey: "gemini-key",
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
+      model: "gemini-test",
+    });
+    fetchMock.mockResolvedValueOnce(aiResponse('{"category_name":"Cafe"}'));
+
+    const result = await categorizeDescription("COSTA", categories, meta);
+    expect(result.success).toBe(true);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    // no "/v1" appended to Google's /openai path
+    expect(url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    );
+    expect(init.headers.Authorization).toBe("Bearer gemini-key");
+    const body = JSON.parse(init.body as string);
+    expect(body.model).toBe("gemini-test");
+    expect(body.reasoning_effort).toBe("minimal");
+    expect(body.chat_template_kwargs).toBeUndefined();
+    expect(body.usage).toBeUndefined();
+    expect(body.response_format.json_schema.schema.$schema).toBeUndefined();
+
+    const rows = await db.select().from(schema.ai_usage);
+    expect(rows[0]).toMatchObject({ provider: "gemini" });
+  });
+
   it("fake mode records a zero-cost usage row without calling fetch", async () => {
     env.ai.fake = true;
     const result = await categorizeDescription("COSTA", categories, meta);

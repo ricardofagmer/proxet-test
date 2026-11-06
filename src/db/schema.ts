@@ -9,6 +9,7 @@ import {
   doublePrecision,
   serial,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const auth_token_type = pgEnum("auth_token_type", [
@@ -25,6 +26,14 @@ export const ai_usage_kind = pgEnum("ai_usage_kind", [
   "categorize",
 ]);
 export const subscription_plan = pgEnum("subscription_plan", ["free", "pro"]);
+// pending = claimed, delivery not yet confirmed (retried by the sweep);
+// sent = delivered once; skipped = suppressed because the user had no
+// verified email (terminal, so it never fires after a later verification).
+export const budget_alert_status = pgEnum("budget_alert_status", [
+  "pending",
+  "sent",
+  "skipped",
+]);
 
 export const users = pgTable("users", {
   id: text("id").primaryKey(),
@@ -275,6 +284,66 @@ export const stripe_events = pgTable("stripe_events", {
     .notNull()
     .defaultNow(),
 });
+
+// Monthly spending limit per category. One limit applies to every month
+// (spend is computed live per UTC calendar month), so "reset every month"
+// needs no rollover job. Only transactions on accounts in `currency` count —
+// there is no FX data to convert between currencies.
+export const budgets = pgTable(
+  "budgets",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    category_id: text("category_id")
+      .notNull()
+      .references(() => categories.id),
+    currency: text("currency").notNull(),
+    // Integer minor units (grosze/cents) — never store money as floats.
+    limit_minor: integer("limit_minor").notNull(),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // One budget per category; the leading user_id also serves the per-user
+    // list and plan-cap count.
+    uniqueIndex("budgets_user_category_uq").on(t.user_id, t.category_id),
+  ],
+);
+
+// Over-budget alert ledger: the unique (budget_id, month) row is claimed with
+// ON CONFLICT DO NOTHING before any email is sent, which is what enforces
+// "max one email per budget per month" under concurrent evaluations.
+export const budget_alerts = pgTable(
+  "budget_alerts",
+  {
+    id: text("id").primaryKey(),
+    budget_id: text("budget_id")
+      .notNull()
+      .references(() => budgets.id),
+    // Direct ownership, like receipts — export and deletion scope by user.
+    user_id: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    // UTC calendar month, 'YYYY-MM'.
+    month: text("month").notNull(),
+    status: budget_alert_status("status").notNull().default("pending"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    sent_at: timestamp("sent_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => [
+    uniqueIndex("budget_alerts_budget_month_uq").on(t.budget_id, t.month),
+    // The sweep's pending-retry lookup filters by user + month.
+    index("budget_alerts_user_month_idx").on(t.user_id, t.month),
+  ],
+);
 
 export const todos = pgTable("todos", {
   id: serial("id").primaryKey(),

@@ -24,6 +24,39 @@ PGlite instance under `./data/pg`. See `.env.example` for optional settings
 Project conventions are documented in [CLAUDE.md](CLAUDE.md) (identical to
 [AGENTS.md](AGENTS.md)).
 
+## System flow
+
+Route components call server functions over RPC through TanStack Query. The
+server functions validate input and delegate to server-only logic, which reads
+and writes Postgres through Drizzle. Budget alerts run after a mutation that
+can raise spending, and again in the hourly maintenance sweep. Each claims one
+`budget_alerts` row per budget per month before sending the email.
+
+```mermaid
+flowchart LR
+  User["User"] --> Routes["Route components (_authed) with TanStack Query"]
+  Routes -->|server fn RPC| MW["Request middleware: context, locale, maintenance, CSRF, headers"]
+  MW --> Fns["Server functions (*.functions.ts)"]
+  Fns --> Logic["Server logic (*.server.ts)"]
+  Logic --> ORM["Drizzle ORM"] --> DB[("Postgres: PGlite data/pg or DATABASE_URL")]
+  Fns -->|after mutation| Alerts["Budget alerts"]
+  MW -->|arms hourly loop| Maint["Maintenance loop"] -->|sweep| Alerts
+  Alerts -->|claim budget_alerts row| DB
+  Alerts --> Email["email.ts"] --> Resend["Resend API"]
+  Fns --> AI["ai.ts"] --> Gemini["AI provider (Gemini, OpenAI-compatible)"]
+  Fns --> Storage["storage.ts: local data or S3"]
+  Stripe["Stripe"] -->|signed POST| Webhook["api/stripe-webhook"] --> Logic
+  MW -.->|reportError if DSN| Sentry["Sentry"]
+```
+
+For the full interactive diagram, with source references for each component
+and notes on budget spend rules, plan limits and receipt scanning, open
+[docs/architecture/system-flow/system-flow.html](docs/architecture/system-flow/system-flow.html)
+in a browser.
+
+Design documents: [budgets spec, with tickets in §7](docs/specs/monthly-budgets.md)
+and [ADR 0001](docs/adr/0001-budgets-in-server-functions.md).
+
 ## How we'd like you to work
 
 You're welcome — encouraged — to use AI coding agents. Treat the task as

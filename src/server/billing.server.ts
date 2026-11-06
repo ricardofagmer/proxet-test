@@ -17,6 +17,8 @@ export interface Entitlements {
   plan: Plan;
   /** null = unlimited. */
   maxAccounts: number | null;
+  /** null = unlimited. */
+  maxBudgets: number | null;
   scansPerMonth: number;
 }
 
@@ -32,12 +34,14 @@ export function entitlementsForPlan(plan: Plan): Entitlements {
     return {
       plan,
       maxAccounts: null,
+      maxBudgets: null,
       scansPerMonth: env.billing.proScansPerMonth,
     };
   }
   return {
     plan: "free",
     maxAccounts: env.billing.freeMaxAccounts,
+    maxBudgets: env.billing.freeMaxBudgets,
     scansPerMonth: env.ai.freeScansPerMonth,
   };
 }
@@ -106,6 +110,47 @@ export async function checkAccountLimit(
     };
   }
   return { allowed: true };
+}
+
+export type BudgetLimitResult =
+  | { allowed: true }
+  | {
+      allowed: false;
+      code: "budget_limit_reached";
+      /** Echoed to the client so the UI can localize the message. */
+      limit: number;
+      error: string;
+    };
+
+/** Whether one more budget fits: null maxBudgets means unlimited (Pro). */
+export function budgetLimitFor(
+  maxBudgets: number | null,
+  existingBudgets: number,
+): BudgetLimitResult {
+  if (maxBudgets === null || existingBudgets < maxBudgets) return { allowed: true };
+  return {
+    allowed: false,
+    code: "budget_limit_reached",
+    limit: maxBudgets,
+    error: `Free plan is limited to ${maxBudgets} budgets. Upgrade to Pro for unlimited budgets.`,
+  };
+}
+
+/** Gate for budget creation: free plan allows up to freeMaxBudgets. Same
+ * downgrade rule as accounts — existing budgets above the limit keep working
+ * and alerting; only creating new ones is blocked. Creation itself goes
+ * through insertBudgetWithinLimit, which repeats this count under a lock. */
+export async function checkBudgetLimit(
+  userId: string,
+  db: Db = defaultDb,
+): Promise<BudgetLimitResult> {
+  const entitlements = await getEntitlements(userId, db);
+  if (entitlements.maxBudgets === null) return { allowed: true };
+  const rows = await db
+    .select({ count: count() })
+    .from(schema.budgets)
+    .where(eq(schema.budgets.user_id, userId));
+  return budgetLimitFor(entitlements.maxBudgets, rows[0]?.count ?? 0);
 }
 
 // ---------------------------------------------------------------------------

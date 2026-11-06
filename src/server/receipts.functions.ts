@@ -8,6 +8,7 @@ import {
   checkScanAllowed,
   getMonthlyUsageSummary,
 } from "#/server/ai-usage.server";
+import { scheduleBudgetAlertEvaluation } from "#/server/budget-alerts.server";
 import { decimalToMinor, formatMinor } from "#/lib/money";
 import {
   MAX_RECEIPT_IMAGES,
@@ -333,6 +334,9 @@ export const updateReceiptItems = createServerFn({ method: "POST" })
       0,
     );
 
+    // Item categories count toward budgets for uncategorized expenses.
+    scheduleBudgetAlertEvaluation(userId);
+
     return {
       success: true,
       items: insertedItems,
@@ -533,6 +537,7 @@ export const saveReceiptAndLink = createServerFn({ method: "POST" })
         .update(schema.receipts)
         .set({ transaction_id: txnId })
         .where(eq(schema.receipts.id, receiptId));
+      scheduleBudgetAlertEvaluation(userId);
 
       transaction = await db
         .select({

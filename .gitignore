@@ -3,7 +3,20 @@ node_modules
 dist
 dist-ssr
 *.local
+# Secrets: every env file except the committed placeholder template.
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+credentials*.json
+service-account*.json
+*-service-account.json
+gcp-key*.json
+.npmrc
 .nitro
 .tanstack
 .wrangler
@@ -12,15 +25,15 @@ dist-ssr
 __unconfig*
 todos.json
 mcp-todos.json
-data/*.db
-data/pg/
-data/receipts/
+# Local user data (database, uploaded receipts) never leaves the machine.
+data/
 test-results/
 playwright-report/
 .playwright-cli
 .playwright-mcp
-.agents
-.claude
+# Agent setup is committed for the take-home walkthrough; personal
+# settings and possible tokens stay local.
+.claude/settings.local.json
 .cursorrules
 .mcp.json
 lat.md/.cache

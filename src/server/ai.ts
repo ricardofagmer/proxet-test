@@ -70,8 +70,10 @@ function toMinorUnits(
   };
 }
 
+const GEMINI_THINKING_HEADROOM_TOKENS = 1024;
+
 export interface AIConfig {
-  provider: "openrouter" | "llamacpp";
+  provider: "openrouter" | "llamacpp" | "gemini";
   baseURL: string;
   /** Absent for the self-hosted llama.cpp backend — llama-server runs
    * keyless behind a private tunnel, never on a public port. */
@@ -93,14 +95,16 @@ function getAIConfig(): AIConfig | null {
   const model =
     env.ai.model || (provider === "llamacpp" ? "local" : "openai/gpt-5-mini");
 
-  // The hosted backend is unusable without a key; llama.cpp needs none.
-  if (provider === "openrouter" && !apiKey) {
+  // Hosted backends are unusable without a key; llama.cpp needs none.
+  if ((provider === "openrouter" || provider === "gemini") && !apiKey) {
     return null;
   }
 
   return {
     provider,
-    baseURL: baseURL.endsWith("/v1") ? baseURL : `${baseURL}/v1`,
+    // Gemini's OpenAI-compatible path ends in /openai, not /v1.
+    baseURL:
+      provider === "gemini" || baseURL.endsWith("/v1") ? baseURL : `${baseURL}/v1`,
     apiKey,
     model,
   };
@@ -207,21 +211,37 @@ async function callAI<T extends z.ZodType>(
         messages: convo,
         temperature: 0.1,
         max_tokens: overrides.max_tokens ?? 100,
-        chat_template_kwargs: { enable_thinking: false },
       };
+
+      if (config.provider === "gemini") {
+        // Gemini 3 models cannot switch thinking off; "minimal" keeps it
+        // from eating the output budget. Thinking tokens count against
+        // max_tokens, so leave headroom on top of the caller's budget.
+        body.reasoning_effort = "minimal";
+        body.max_tokens = (overrides.max_tokens ?? 100) + GEMINI_THINKING_HEADROOM_TOKENS;
+      } else {
+        // llama.cpp-specific; strict OpenAI-compatible APIs may reject it.
+        body.chat_template_kwargs = { enable_thinking: false };
+      }
 
       // OpenRouter reports the actual charge (in USD) when asked — the
       // source for cost_estimate_microusd. llama.cpp calls cost nothing.
+      // Gemini reports tokens only, so its cost is not metered here.
       if (config.provider === "openrouter") {
         body.usage = { include: true };
       }
 
+      const jsonSchema: Record<string, unknown> = {
+        ...z.toJSONSchema(zodSchema, { target: "draft-04" }),
+      };
+      // Gemini's schema subset does not accept the "$schema" draft marker.
+      if (config.provider === "gemini") delete jsonSchema.$schema;
       body.response_format = {
         type: "json_schema",
         json_schema: {
           name: "json_schema",
           strict: true,
-          schema: z.toJSONSchema(zodSchema, { target: "draft-04" }),
+          schema: jsonSchema,
         },
       };
 

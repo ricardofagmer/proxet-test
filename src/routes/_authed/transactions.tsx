@@ -10,6 +10,8 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Select, SelectItem } from "#/components/ui/select";
+import { QuickCreateAccountDialog } from "#/components/quick-create-account-dialog";
+import { QuickCreateCategoryDialog } from "#/components/quick-create-category-dialog";
 import {
   Dialog,
   DialogContent,
@@ -703,6 +705,9 @@ function toIsoDatetime(dtLocal: string): string {
 
 // Formats an ISO datetime for display in the transaction list.
 // Shows "May 8, 2026 14:30" if time is non-midnight, or "May 8, 2026" if midnight.
+// Stored values are wall-clock times without an offset. Parsing them as UTC and
+// formatting in UTC shows them unchanged; formatting in the browser's zone would
+// move midnight entries to the previous day west of UTC.
 function formatTxDate(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso + "Z");
@@ -712,12 +717,14 @@ function formatTxDate(iso: string): string {
     month: "short",
     day: "numeric",
     year: "numeric",
+    timeZone: "UTC",
   });
   if (!hasTime) return datePart;
   const timePart = d.toLocaleTimeString("en", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+    timeZone: "UTC",
   });
   return `${datePart} ${timePart}`;
 }
@@ -765,6 +772,11 @@ function TransactionForm({
   );
   const [validationError, setValidationError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [quickCreate, setQuickCreate] = useState<"account" | "category" | null>(
+    null,
+  );
+  const closeQuickCreate = () => setQuickCreate(null);
+  const parentCategories = categories.filter((cat) => !cat.parent_id);
 
   // Build category tree for indentation
   const categoryTree = useMemo(() => {
@@ -902,18 +914,28 @@ function TransactionForm({
             <Label htmlFor="tx-account" className="mb-1">
               {m.account_filter()}
             </Label>
-            <Select
-              id="tx-account"
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-            >
-              <SelectItem value="">Select account...</SelectItem>
-              {accounts.map((acc) => (
-                <SelectItem key={acc.id} value={acc.id}>
-                  {acc.name} ({acc.currency})
-                </SelectItem>
-              ))}
-            </Select>
+            <div className="flex items-center gap-2">
+              <Select
+                id="tx-account"
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+              >
+                <SelectItem value="">Select account...</SelectItem>
+                {accounts.map((acc) => (
+                  <SelectItem key={acc.id} value={acc.id}>
+                    {acc.name} ({acc.currency})
+                  </SelectItem>
+                ))}
+              </Select>
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => setQuickCreate("account")}
+              >
+                {m.quick_create_account_button()}
+              </Button>
+            </div>
           </div>
 
           {/* Category */}
@@ -921,14 +943,24 @@ function TransactionForm({
             <Label htmlFor="tx-category" className="mb-1">
               {m.category_filter()}
             </Label>
-            <Select
-              id="tx-category"
-              value={categoryId || ""}
-              onChange={(e) => setCategoryId(e.target.value || undefined)}
-            >
-              <SelectItem value="">None</SelectItem>
-              {renderCategoryOptions(categoryTree, 0)}
-            </Select>
+            <div className="flex items-center gap-2">
+              <Select
+                id="tx-category"
+                value={categoryId || ""}
+                onChange={(e) => setCategoryId(e.target.value || undefined)}
+              >
+                <SelectItem value="">None</SelectItem>
+                {renderCategoryOptions(categoryTree, 0)}
+              </Select>
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => setQuickCreate("category")}
+              >
+                {m.quick_create_category_button()}
+              </Button>
+            </div>
           </div>
 
           {/* Error */}
@@ -964,6 +996,23 @@ function TransactionForm({
             </Button>
           </DialogFooter>
         </form>
+
+        {quickCreate === "account" && (
+          <QuickCreateAccountDialog
+            onCreated={(id) => {
+              setAccountId(id);
+              setValidationError(null);
+            }}
+            onClose={closeQuickCreate}
+          />
+        )}
+        {quickCreate === "category" && (
+          <QuickCreateCategoryDialog
+            parentCategories={parentCategories}
+            onCreated={setCategoryId}
+            onClose={closeQuickCreate}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );

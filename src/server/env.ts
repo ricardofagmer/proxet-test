@@ -9,6 +9,10 @@ import { z } from "zod";
 // misconfigured production deployment fails to boot instead of silently
 // falling back to insecure defaults.
 
+/** Google's OpenAI-compatible endpoint for the Gemini API. */
+export const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+export const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash";
+
 export const DEV_SESSION_SECRET =
   "dev-session-secret-change-in-production-min-32-chars";
 
@@ -20,6 +24,11 @@ const envSchema = z.object({
   AI_BASE_URL: z.string().optional(),
   AI_MODEL: z.string().optional(),
   AI_FAKE: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
+  // Google's own SDK names for the same AI Studio key, accepted as fallbacks.
+  GOOGLE_API_KEY: z.string().optional(),
+  GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().optional(),
   AI_FREE_SCANS_PER_MONTH: z.string().optional(),
   AI_DAILY_SPEND_CAP_USD: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
@@ -27,6 +36,7 @@ const envSchema = z.object({
   STRIPE_PRICE_PRO: z.string().optional(),
   BILLING_PRO_SCANS_PER_MONTH: z.string().optional(),
   BILLING_FREE_MAX_ACCOUNTS: z.string().optional(),
+  BILLING_FREE_MAX_BUDGETS: z.string().optional(),
   TEST_MODE: z.string().optional(),
   CAPTCHA_ENABLED: z.string().optional(),
   EMAIL_PROVIDER: z.string().optional(),
@@ -62,7 +72,7 @@ export interface ValidatedEnv {
      * llama-server (OpenAI-compatible, no key required). Explicit via
      * AI_PROVIDER, otherwise inferred: key set → openrouter, else if only a
      * base URL is set → llamacpp. */
-    provider: "openrouter" | "llamacpp";
+    provider: "openrouter" | "llamacpp" | "gemini";
     apiKey: string | undefined;
     baseURL: string | undefined;
     model: string | undefined;
@@ -90,6 +100,8 @@ export interface ValidatedEnv {
     proScansPerMonth: number;
     /** Accounts a free-plan user may have; Pro is unlimited. */
     freeMaxAccounts: number;
+    /** Category budgets a free-plan user may have; Pro is unlimited. */
+    freeMaxBudgets: number;
   };
 }
 
@@ -158,21 +170,36 @@ export function validateEnv(raw: Record<string, string | undefined>): ValidatedE
   }
 
   // AI provider: explicit AI_PROVIDER wins; otherwise an API key implies the
-  // hosted backend and a bare base URL implies self-hosted llama.cpp.
-  let aiProvider: "openrouter" | "llamacpp";
+  // hosted backend, a lone Gemini/Google key implies Gemini, and a bare base URL
+  // implies self-hosted llama.cpp.
+  const geminiApiKey =
+    parsed.GEMINI_API_KEY ?? parsed.GOOGLE_API_KEY ?? parsed.GOOGLE_GENERATIVE_AI_API_KEY;
+  let aiProvider: "openrouter" | "llamacpp" | "gemini";
   if (parsed.AI_PROVIDER) {
-    if (parsed.AI_PROVIDER !== "openrouter" && parsed.AI_PROVIDER !== "llamacpp") {
+    if (
+      parsed.AI_PROVIDER !== "openrouter" &&
+      parsed.AI_PROVIDER !== "llamacpp" &&
+      parsed.AI_PROVIDER !== "gemini"
+    ) {
       throw new Error(
-        `AI_PROVIDER must be "openrouter" or "llamacpp", got: ${parsed.AI_PROVIDER}`,
+        `AI_PROVIDER must be "openrouter", "llamacpp" or "gemini", got: ${parsed.AI_PROVIDER}`,
       );
     }
     aiProvider = parsed.AI_PROVIDER;
+  } else if (!parsed.AI_API_KEY && geminiApiKey) {
+    aiProvider = "gemini";
   } else {
     aiProvider = !parsed.AI_API_KEY && parsed.AI_BASE_URL ? "llamacpp" : "openrouter";
   }
   if (aiProvider === "llamacpp" && !parsed.AI_BASE_URL) {
     throw new Error("AI_BASE_URL must be set when AI_PROVIDER=llamacpp.");
   }
+  // Gemini has its own key/model variables so an existing OpenRouter setup in
+  // AI_API_KEY / AI_BASE_URL / AI_MODEL is never sent to Google by mistake.
+  const aiApiKey =
+    aiProvider === "gemini" ? (geminiApiKey ?? parsed.AI_API_KEY) : parsed.AI_API_KEY;
+  const aiBaseURL = aiProvider === "gemini" ? GEMINI_BASE_URL : parsed.AI_BASE_URL;
+  const aiModel = aiProvider === "gemini" ? (parsed.GEMINI_MODEL ?? GEMINI_DEFAULT_MODEL) : parsed.AI_MODEL;
 
   const freeScansPerMonth = parsed.AI_FREE_SCANS_PER_MONTH
     ? Number(parsed.AI_FREE_SCANS_PER_MONTH)
@@ -213,6 +240,12 @@ export function validateEnv(raw: Record<string, string | undefined>): ValidatedE
   if (!Number.isInteger(freeMaxAccounts) || freeMaxAccounts < 1) {
     throw new Error("BILLING_FREE_MAX_ACCOUNTS must be a positive integer.");
   }
+  const freeMaxBudgets = parsed.BILLING_FREE_MAX_BUDGETS
+    ? Number(parsed.BILLING_FREE_MAX_BUDGETS)
+    : 3;
+  if (!Number.isInteger(freeMaxBudgets) || freeMaxBudgets < 1) {
+    throw new Error("BILLING_FREE_MAX_BUDGETS must be a positive integer.");
+  }
 
   const logLevel = parsed.LOG_LEVEL || "info";
   if (!LOG_LEVELS.includes(logLevel as LogLevel)) {
@@ -234,9 +267,9 @@ export function validateEnv(raw: Record<string, string | undefined>): ValidatedE
     },
     ai: {
       provider: aiProvider,
-      apiKey: parsed.AI_API_KEY,
-      baseURL: parsed.AI_BASE_URL,
-      model: parsed.AI_MODEL,
+      apiKey: aiApiKey,
+      baseURL: aiBaseURL,
+      model: aiModel,
       fake: Boolean(parsed.AI_FAKE),
       freeScansPerMonth,
       dailySpendCapUsd,
@@ -252,6 +285,7 @@ export function validateEnv(raw: Record<string, string | undefined>): ValidatedE
       stripePricePro: parsed.STRIPE_PRICE_PRO,
       proScansPerMonth,
       freeMaxAccounts,
+      freeMaxBudgets,
     },
   };
 }

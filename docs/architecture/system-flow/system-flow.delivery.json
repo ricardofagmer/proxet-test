@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "7eae5b52-fd4d-4e89-b8fd-9ab3ea666a23",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/Users/ricardofagmer/projects/interview-agentic-task-finance-tracker/docs/architecture/system-flow/candidate.json",
+  "output": "/Users/ricardofagmer/projects/interview-agentic-task-finance-tracker/docs/architecture/system-flow/system-flow.html",
+  "specification": {
+    "sha256": "9ab2081e3e1e8303c19ca1c5709301c2f91ce44b28480779400f7f51ddc8dd8c",
+    "bytes": 14422
+  },
+  "artifact": {
+    "sha256": "b5a2b36a504f7bc11e4101896fb7e5e2fbac4b36d42c17d049e3c3a25b090919",
+    "bytes": 787942
+  }
+}

@@ -19,6 +19,7 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Select, SelectItem } from "#/components/ui/select";
+import { CurrencySelect } from "#/components/currency-select";
 import {
   Dialog,
   DialogContent,
@@ -169,16 +170,10 @@ function NewAccountModal({
             >
               {m.currency_label()}
             </Label>
-            <input
+            <CurrencySelect
               id="ia-currency"
-              type="text"
               value={currency}
-              onChange={(e) =>
-                setCurrency(e.target.value.toUpperCase().slice(0, 3))
-              }
-              maxLength={3}
-              className="h-9 w-20 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 font-mono"
-              placeholder="PLN"
+              onValueChange={setCurrency}
             />
           </div>
           {error && (

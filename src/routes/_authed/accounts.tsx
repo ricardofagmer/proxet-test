@@ -7,6 +7,7 @@ import { EditButton, DeleteButton } from "#/components/ui/action-buttons";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { CurrencySelect } from "#/components/currency-select";
 import {
   Dialog,
   DialogContent,
@@ -138,20 +139,11 @@ function AccountForm({
             <Label htmlFor="acc-currency" className="mb-1">
               {m.currency_label()}
             </Label>
-            <Input
+            <CurrencySelect
               id="acc-currency"
-              type="text"
               value={currency}
-              onChange={(e) =>
-                setCurrency(e.target.value.toUpperCase().slice(0, 3))
-              }
-              maxLength={3}
-              className="w-20 font-mono"
-              placeholder="PLN"
+              onValueChange={setCurrency}
             />
-            <p className="text-xs text-muted-foreground mt-1">
-              3-letter ISO currency code (e.g. PLN, USD, EUR)
-            </p>
           </div>
 
           {/* Error */}

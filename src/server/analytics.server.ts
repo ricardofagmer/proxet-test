@@ -1,5 +1,6 @@
 import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { db, schema } from "#/db";
+import { DEFAULT_ACCOUNT_CURRENCY } from "./budgets.server";
 
 
 // --- Types ---
@@ -24,11 +25,22 @@ export interface DashboardSummary {
   totalExpenses: number;
   net: number;
   topCategories: TopCategory[];
+  /**
+   * Distinct currencies (sorted) of the accounts behind the totals: the
+   * filtered account, or every account with transactions in the range. More
+   * than one means the totals add up amounts in different currencies.
+   */
+  currencies: string[];
 }
 
 export interface SankeyNode {
   name: string;
   color?: string;
+  /**
+   * Category and subcategory nodes: the category id. The uncategorized "Other"
+   * node: null. Account nodes: absent.
+   */
+  categoryId?: string | null;
 }
 
 export interface SankeyLink {
@@ -132,51 +144,99 @@ export async function getDashboardSummaryInternal(
     totalExpenses,
     net: totalIncome - totalExpenses,
     topCategories,
+    currencies: await getSummaryCurrencies(userId, filter),
   };
 }
 
+/** See `DashboardSummary.currencies`. Both branches are scoped to `userId`. */
+async function getSummaryCurrencies(userId: string, filter: AnalyticsFilter): Promise<string[]> {
+  const currency = sql<string>`COALESCE(${schema.accounts.currency}, ${DEFAULT_ACCOUNT_CURRENCY})`;
+  const rows = filter.accountId
+    ? await db
+        .selectDistinct({ currency })
+        .from(schema.accounts)
+        .where(and(eq(schema.accounts.id, filter.accountId), eq(schema.accounts.user_id, userId)))
+    : await db
+        .selectDistinct({ currency })
+        .from(schema.transactions)
+        .innerJoin(schema.accounts, eq(schema.transactions.account_id, schema.accounts.id))
+        .where(and(buildWhereClause(userId, filter), eq(schema.accounts.user_id, userId)));
+  return rows.map((row) => row.currency).sort();
+}
+
+// --- Expense attribution (shared by the Sankey and the category drill-down) ---
+
+/** Category key of the bucket for spending that has no category at all. */
+const OTHER_CATEGORY_KEY = "Other";
+const FALLBACK_CATEGORY_COLOR = "#6b7280";
+
+interface ExpenseRow {
+  id: string;
+  accountId: string;
+  date: string;
+  description: string | null;
+  amountMinor: number;
+  categoryId: string | null;
+  accountName: string;
+}
+
+interface CategoryInfo {
+  name: string;
+  color: string;
+  parentId: string | null;
+}
+
+interface ResolvedCategory extends CategoryInfo {
+  id: string;
+}
+
+interface ExpenseContext {
+  accounts: Array<{ id: string; name: string }>;
+  transactions: ExpenseRow[];
+  receiptIdByTransaction: Map<string, string>;
+  itemsByReceipt: Map<string, ReceiptItemRow[]>;
+  categoryInfo: Map<string, CategoryInfo>;
+}
+
+/** The part of one expense that lands in one top-level category column. */
+interface TopCategoryAllocation {
+  /** Top-level category id, or OTHER_CATEGORY_KEY for uncategorized spending. */
+  categoryKey: string;
+  /** Minor units, positive. */
+  amount: number;
+  /** Subcategories (children of the top category) this part was spent on. */
+  subcategoryIds: string[];
+}
+
+function addAmount(map: Map<string, number>, key: string, amount: number): void {
+  map.set(key, (map.get(key) ?? 0) + amount);
+}
+
 /**
- * Fetches spending data formatted for a Sankey diagram: 3-level flow from accounts to categories to subcategories.
- *
- * For each expense transaction:
- * - If it has a receipt, receipt items determine subcategory breakdown.
- *   Each item's category_id determines the subcategory; the parent of that
- *   category (or the transaction's category) is the top-level category.
- *   Items without category_id use the parent category name as the subcategory node.
- * - If it has no receipt, the transaction's category determines the flow.
- *   The top-level category is the parent (if subcategory) or the category itself.
- *   When the transaction is categorized to a subcategory, spending flows to that subcategory.
- *   When the transaction is categorized to a top-level category only, spending flows to a
- *   subcategory node with the same name as the parent category.
- * - If the transaction has no category, it flows to an "Other" top-level node.
- *
- * The Sankey is balanced: account→category total = sum of category→subcategory totals.
- * Each category gets its own distinct 3rd-level node (e.g., "Groceries" → "Groceries")
- * so that spending from different categories is visually separated.
+ * Loads every expense (amount < 0) of the user in the filter, with its
+ * receipt items and the categories needed to resolve top-level parents.
+ * Every query is scoped to `userId` through the transactions or accounts.
  */
-export async function getSpendingSankeyInternal(
+async function loadExpenseContext(
   userId: string,
   filter: AnalyticsFilter,
-): Promise<{ nodes: SankeyNode[]; links: SankeyLink[] }> {
+): Promise<ExpenseContext> {
   const whereClause = buildWhereClause(userId, filter);
 
-  // 1. Get all accounts for this user (respecting account filter)
   const accountWhere = filter.accountId
     ? and(eq(schema.accounts.user_id, userId), eq(schema.accounts.id, filter.accountId))
     : eq(schema.accounts.user_id, userId);
   const accounts = await db
-    .select({
-      id: schema.accounts.id,
-      name: schema.accounts.name,
-    })
+    .select({ id: schema.accounts.id, name: schema.accounts.name })
     .from(schema.accounts)
     .where(accountWhere);
 
-  // 2. Get all expense transactions with account and category info
-  const transactions = await db
+  const rows = await db
     .select({
       id: schema.transactions.id,
       accountId: schema.transactions.account_id,
+      date: schema.transactions.date,
+      description: schema.transactions.description,
       amountMinor: schema.transactions.amount_minor,
       categoryId: schema.transactions.category_id,
       accountName: schema.accounts.name,
@@ -185,34 +245,18 @@ export async function getSpendingSankeyInternal(
       categoryParentId: schema.categories.parent_id,
     })
     .from(schema.transactions)
-    .innerJoin(
-      schema.accounts,
-      eq(schema.transactions.account_id, schema.accounts.id),
-    )
-    .leftJoin(
-      schema.categories,
-      eq(schema.transactions.category_id, schema.categories.id),
-    )
-    .where(
-      and(
-        whereClause,
-        sql`${schema.transactions.amount_minor} < 0`,
-      ),
-    );
+    .innerJoin(schema.accounts, eq(schema.transactions.account_id, schema.accounts.id))
+    .leftJoin(schema.categories, eq(schema.transactions.category_id, schema.categories.id))
+    .where(and(whereClause, sql`${schema.transactions.amount_minor} < 0`));
 
-  // 3. Get receipts for these transactions
-  const transactionIds = transactions.map((t) => t.id);
+  const transactionIds = rows.map((row) => row.id);
   const receipts = transactionIds.length > 0
     ? await db
-        .select({
-          id: schema.receipts.id,
-          transactionId: schema.receipts.transaction_id,
-        })
+        .select({ id: schema.receipts.id, transactionId: schema.receipts.transaction_id })
         .from(schema.receipts)
         .where(inArray(schema.receipts.transaction_id, transactionIds))
     : [];
 
-  // 4. Get receipt items for these receipts
   const receiptIds = receipts.map((r) => r.id);
   const receiptItems: ReceiptItemRow[] = receiptIds.length > 0
     ? (await db
@@ -226,59 +270,56 @@ export async function getSpendingSankeyInternal(
           itemParentId: schema.categories.parent_id,
         })
         .from(schema.receipt_items)
-        .leftJoin(
-          schema.categories,
-          eq(schema.receipt_items.category_id, schema.categories.id),
-        )
+        .leftJoin(schema.categories, eq(schema.receipt_items.category_id, schema.categories.id))
         .where(inArray(schema.receipt_items.receipt_id, receiptIds))) as ReceiptItemRow[]
     : [];
 
-  // Build lookup maps
-  const receiptByTransaction = new Map<string, (typeof receipts)[0]>();
-  for (const r of receipts) {
-    receiptByTransaction.set(r.transactionId!, r);
+  const receiptIdByTransaction = new Map<string, string>();
+  for (const receipt of receipts) {
+    if (receipt.transactionId) receiptIdByTransaction.set(receipt.transactionId, receipt.id);
   }
 
   const itemsByReceipt = new Map<string, ReceiptItemRow[]>();
   for (const item of receiptItems) {
-    if (!itemsByReceipt.has(item.receiptId)) {
-      itemsByReceipt.set(item.receiptId, []);
-    }
-    itemsByReceipt.get(item.receiptId)!.push(item);
+    itemsByReceipt.set(item.receiptId, [...(itemsByReceipt.get(item.receiptId) ?? []), item]);
   }
 
-  // Build category info map from all categories referenced
-  const categoryInfo = new Map<
-    string,
-    { name: string; color: string; parentId: string | null }
-  >();
-  for (const t of transactions) {
-    if (t.categoryId && !categoryInfo.has(t.categoryId)) {
-      categoryInfo.set(t.categoryId, {
-        name: t.categoryName ?? "Unknown",
-        color: t.categoryColor ?? "#6b7280",
-        parentId: t.categoryParentId,
-      });
-    }
+  const categoryInfo = new Map<string, CategoryInfo>();
+  const remember = (
+    id: string,
+    found: { name: string | null; color: string | null; parentId: string | null },
+  ): void => {
+    if (categoryInfo.has(id)) return;
+    categoryInfo.set(id, {
+      name: found.name ?? "Unknown",
+      color: found.color ?? FALLBACK_CATEGORY_COLOR,
+      parentId: found.parentId,
+    });
+  };
+  for (const row of rows) {
+    if (!row.categoryId) continue;
+    remember(row.categoryId, {
+      name: row.categoryName,
+      color: row.categoryColor,
+      parentId: row.categoryParentId,
+    });
   }
   for (const item of receiptItems) {
-    if (item.categoryId && !categoryInfo.has(item.categoryId)) {
-      categoryInfo.set(item.categoryId, {
-        name: item.itemName ?? "Unknown",
-        color: item.itemColor ?? "#6b7280",
-        parentId: item.itemParentId,
-      });
-    }
+    if (!item.categoryId) continue;
+    remember(item.categoryId, {
+      name: item.itemName,
+      color: item.itemColor,
+      parentId: item.itemParentId,
+    });
   }
 
-  // Also fetch parent categories that aren't directly referenced by any transaction
-  // This ensures getTopCategory can resolve parent chains
-  const allParentIds = new Set<string>();
+  // Parents not referenced directly by any expense, so top-level resolution works.
+  const parentIds = new Set<string>();
   for (const info of categoryInfo.values()) {
-    if (info.parentId) allParentIds.add(info.parentId);
+    if (info.parentId) parentIds.add(info.parentId);
   }
-  if (allParentIds.size > 0) {
-    const parentCategories = await db
+  if (parentIds.size > 0) {
+    const parents = await db
       .select({
         id: schema.categories.id,
         name: schema.categories.name,
@@ -286,235 +327,289 @@ export async function getSpendingSankeyInternal(
         parentId: schema.categories.parent_id,
       })
       .from(schema.categories)
-      .where(inArray(schema.categories.id, Array.from(allParentIds)));
-    for (const pc of parentCategories) {
-      if (!categoryInfo.has(pc.id)) {
-        categoryInfo.set(pc.id, {
-          name: pc.name,
-          color: pc.color ?? "#6b7280",
-          parentId: pc.parentId,
-        });
-      }
-    }
+      .where(and(eq(schema.categories.user_id, userId), inArray(schema.categories.id, [...parentIds])));
+    for (const parent of parents) remember(parent.id, parent);
   }
 
-  // Helper: get top-level category info from a category ID
-  // Returns the parent if the category has one, otherwise the category itself
-  function getTopCategory(catId: string | null) {
-    if (!catId) return null;
-    const info = categoryInfo.get(catId);
-    if (!info) return null;
-    if (info.parentId) {
-      const parent = categoryInfo.get(info.parentId);
-      if (parent) return { id: info.parentId, ...parent };
-      // Parent not in our map — treat this category as top-level
-      return { id: catId, ...info };
+  const transactions: ExpenseRow[] = rows;
+  return { accounts, transactions, receiptIdByTransaction, itemsByReceipt, categoryInfo };
+}
+
+/** The parent of a subcategory, or the category itself when it is top-level. */
+function getTopCategory(context: ExpenseContext, categoryId: string | null): ResolvedCategory | null {
+  if (!categoryId) return null;
+  const info = context.categoryInfo.get(categoryId);
+  if (!info) return null;
+  if (info.parentId) {
+    const parent = context.categoryInfo.get(info.parentId);
+    // Parent not loaded: treat this category as top-level.
+    return parent ? { id: info.parentId, ...parent } : { id: categoryId, ...info };
+  }
+  return { id: categoryId, ...info };
+}
+
+/**
+ * How one expense splits across the top-level category column — the single
+ * source of truth for what each category's total is made of:
+ * - A categorized expense goes whole to its top-level category (receipt items
+ *   only refine the subcategory breakdown).
+ * - An uncategorized expense with a receipt goes to the top-level category of
+ *   each categorized item; the rest (uncategorized items + unitemized delta)
+ *   goes to "Other".
+ * - An uncategorized expense without a receipt goes whole to "Other".
+ */
+function allocateToTopCategories(
+  context: ExpenseContext,
+  transaction: ExpenseRow,
+): TopCategoryAllocation[] {
+  const absAmount = Math.abs(transaction.amountMinor);
+  const receiptId = context.receiptIdByTransaction.get(transaction.id);
+  const items = receiptId ? (context.itemsByReceipt.get(receiptId) ?? []) : [];
+  const topCategory = getTopCategory(context, transaction.categoryId);
+
+  if (topCategory) {
+    const subcategoryIds = new Set<string>();
+    if (transaction.categoryId && transaction.categoryId !== topCategory.id) {
+      subcategoryIds.add(transaction.categoryId);
     }
-    return { id: catId, ...info };
+    for (const item of items) {
+      if (item.categoryId && item.categoryId !== topCategory.id) subcategoryIds.add(item.categoryId);
+    }
+    return [{ categoryKey: topCategory.id, amount: absAmount, subcategoryIds: [...subcategoryIds] }];
   }
 
-  // Process transactions and build spending maps
+  if (!receiptId) {
+    return [{ categoryKey: OTHER_CATEGORY_KEY, amount: absAmount, subcategoryIds: [] }];
+  }
+
+  const byCategory = new Map<string, TopCategoryAllocation>();
+  for (const item of items) {
+    const itemTop = getTopCategory(context, item.categoryId);
+    if (!item.categoryId || !itemTop) continue;
+    const allocation = byCategory.get(itemTop.id) ?? {
+      categoryKey: itemTop.id,
+      amount: 0,
+      subcategoryIds: [],
+    };
+    allocation.amount += item.totalPriceMinor ?? 0;
+    if (item.categoryId !== itemTop.id && !allocation.subcategoryIds.includes(item.categoryId)) {
+      allocation.subcategoryIds.push(item.categoryId);
+    }
+    byCategory.set(itemTop.id, allocation);
+  }
+  const itemsTotal = items.reduce((sum, item) => sum + (item.totalPriceMinor ?? 0), 0);
+  const uncategorizedItems = items
+    .filter((item) => !item.categoryId)
+    .reduce((sum, item) => sum + (item.totalPriceMinor ?? 0), 0);
+  const remaining = uncategorizedItems + Math.max(0, absAmount - itemsTotal);
+  const allocations = [...byCategory.values()];
+  if (remaining > 0) {
+    allocations.push({ categoryKey: OTHER_CATEGORY_KEY, amount: remaining, subcategoryIds: [] });
+  }
+  return allocations;
+}
+
+/** Category -> subcategory bands of one expense (keys `topCategoryId|subcategoryId`). */
+function addSubcategorySpending(
+  context: ExpenseContext,
+  transaction: ExpenseRow,
+  catSubSpending: Map<string, number>,
+): void {
+  const absAmount = Math.abs(transaction.amountMinor);
+  const receiptId = context.receiptIdByTransaction.get(transaction.id);
+  const topCategory = getTopCategory(context, transaction.categoryId);
+
+  if (!receiptId) {
+    if (!topCategory) return;
+    // A transaction on a top-level category flows to a same-name subcategory node.
+    const subcategoryId =
+      transaction.categoryId && transaction.categoryId !== topCategory.id
+        ? transaction.categoryId
+        : topCategory.id;
+    addAmount(catSubSpending, `${topCategory.id}|${subcategoryId}`, absAmount);
+    return;
+  }
+
+  const items = context.itemsByReceipt.get(receiptId) ?? [];
+  if (topCategory) {
+    for (const item of items) {
+      const subcategoryId = item.categoryId ?? topCategory.id;
+      addAmount(catSubSpending, `${topCategory.id}|${subcategoryId}`, item.totalPriceMinor ?? 0);
+    }
+    const delta = absAmount - items.reduce((sum, item) => sum + (item.totalPriceMinor ?? 0), 0);
+    if (delta > 0) addAmount(catSubSpending, `${topCategory.id}|${topCategory.id}`, delta);
+    return;
+  }
+
+  for (const item of items) {
+    const itemTop = getTopCategory(context, item.categoryId);
+    if (item.categoryId && itemTop) {
+      addAmount(catSubSpending, `${itemTop.id}|${item.categoryId}`, item.totalPriceMinor ?? 0);
+    }
+  }
+}
+
+/**
+ * Fetches spending data formatted for a Sankey diagram: 3-level flow from
+ * accounts to categories to subcategories. See `allocateToTopCategories` for
+ * how an expense is attributed to categories.
+ *
+ * The Sankey is balanced: account→category total = sum of category→subcategory totals.
+ * Each category gets its own distinct 3rd-level node (e.g., "Groceries" → "Groceries")
+ * so that spending from different categories is visually separated.
+ * Category and subcategory nodes carry `categoryId`; the "Other" node carries
+ * `categoryId: null`, so the dashboard can drill into a category.
+ */
+export async function getSpendingSankeyInternal(
+  userId: string,
+  filter: AnalyticsFilter,
+): Promise<{ nodes: SankeyNode[]; links: SankeyLink[] }> {
+  const context = await loadExpenseContext(userId, filter);
+
   const accCatSpending = new Map<string, number>(); // account|topCat → total
   const catSubSpending = new Map<string, number>(); // topCat|subCat → total
-
-  for (const txn of transactions) {
-    const absAmount = Math.abs(txn.amountMinor);
-    const receipt = receiptByTransaction.get(txn.id);
-
-    if (receipt) {
-      // Transaction has a receipt — use receipt items for subcategory breakdown
-      const items = itemsByReceipt.get(receipt.id) ?? [];
-      const itemsTotal = items.reduce((sum, i) => sum + (i.totalPriceMinor ?? 0), 0);
-      const delta = absAmount - itemsTotal;
-
-      // Determine top category from transaction's category
-      const topCat = getTopCategory(txn.categoryId);
-
-      if (topCat) {
-        // Transaction's category determines the top-level flow
-        const accCatKey = `${txn.accountId}|${topCat.id}`;
-        accCatSpending.set(
-          accCatKey,
-          (accCatSpending.get(accCatKey) ?? 0) + absAmount,
-        );
-
-        // Process each receipt item — items provide subcategory breakdown
-        for (const item of items) {
-          const itemAmount = item.totalPriceMinor ?? 0;
-          if (item.categoryId) {
-            // Use item's category as the subcategory under transaction's top category
-            const catSubKey = `${topCat.id}|${item.categoryId}`;
-            catSubSpending.set(
-              catSubKey,
-              (catSubSpending.get(catSubKey) ?? 0) + itemAmount,
-            );
-          } else {
-            // Uncategorized receipt item → use parent category name as subcategory
-            const catSubKey = `${topCat.id}|${topCat.id}`;
-            catSubSpending.set(
-              catSubKey,
-              (catSubSpending.get(catSubKey) ?? 0) + itemAmount,
-            );
-          }
-        }
-
-        // Delta (transaction amount - items sum) → use parent category name as subcategory
-        if (delta > 0) {
-          const catSubKey = `${topCat.id}|${topCat.id}`;
-          catSubSpending.set(
-            catSubKey,
-            (catSubSpending.get(catSubKey) ?? 0) + delta,
-          );
-        }
-      } else {
-        // No category on transaction — items determine categories
-        for (const item of items) {
-          const itemAmount = item.totalPriceMinor ?? 0;
-          if (item.categoryId) {
-            const itemTopCat = getTopCategory(item.categoryId);
-            if (itemTopCat) {
-              const accCatKey = `${txn.accountId}|${itemTopCat.id}`;
-              accCatSpending.set(
-                accCatKey,
-                (accCatSpending.get(accCatKey) ?? 0) + itemAmount,
-              );
-              const catSubKey = `${itemTopCat.id}|${item.categoryId}`;
-              catSubSpending.set(
-                catSubKey,
-                (catSubSpending.get(catSubKey) ?? 0) + itemAmount,
-              );
-            }
-          }
-        }
-        // Remaining amount (uncategorized items + delta) → "Other" top-level
-        const uncategorizedAmount = items
-          .filter((i) => !i.categoryId)
-          .reduce((sum, i) => sum + (i.totalPriceMinor ?? 0), 0);
-        const remaining = uncategorizedAmount + Math.max(0, delta);
-        if (remaining > 0) {
-          const accCatKey = `${txn.accountId}|Other`;
-          accCatSpending.set(
-            accCatKey,
-            (accCatSpending.get(accCatKey) ?? 0) + remaining,
-          );
-        }
-      }
-    } else {
-      // No receipt — use transaction category directly
-      const topCat = getTopCategory(txn.categoryId);
-
-      if (topCat) {
-        const accCatKey = `${txn.accountId}|${topCat.id}`;
-        accCatSpending.set(
-          accCatKey,
-          (accCatSpending.get(accCatKey) ?? 0) + absAmount,
-        );
-
-        // If transaction is categorized to a subcategory, preserve that detail
-        if (txn.categoryId && topCat.id !== txn.categoryId) {
-          const catSubKey = `${topCat.id}|${txn.categoryId}`;
-          catSubSpending.set(
-            catSubKey,
-            (catSubSpending.get(catSubKey) ?? 0) + absAmount,
-          );
-        } else {
-          // Transaction's category IS the top category (no subcategory detail)
-          // Use the category's own ID as the subcategory node
-          const catSubKey = `${topCat.id}|${topCat.id}`;
-          catSubSpending.set(
-            catSubKey,
-            (catSubSpending.get(catSubKey) ?? 0) + absAmount,
-          );
-        }
-      } else {
-        // No category at all → "Other" top-level (no subcategory link needed)
-        const accCatKey = `${txn.accountId}|Other`;
-        accCatSpending.set(
-          accCatKey,
-          (accCatSpending.get(accCatKey) ?? 0) + absAmount,
-        );
-      }
+  for (const transaction of context.transactions) {
+    for (const allocation of allocateToTopCategories(context, transaction)) {
+      addAmount(accCatSpending, `${transaction.accountId}|${allocation.categoryKey}`, allocation.amount);
     }
+    addSubcategorySpending(context, transaction, catSubSpending);
   }
 
-  // Build Sankey nodes and links
   const accountIndex = new Map<string, number>();
   const categoryIndex = new Map<string, number>();
   const subcategoryIndex = new Map<string, number>();
   const nodes: SankeyNode[] = [];
   const links: SankeyLink[] = [];
 
-  // Add account nodes first
-  for (const account of accounts) {
-    const idx = nodes.length;
-    accountIndex.set(account.id, idx);
+  for (const account of context.accounts) {
+    accountIndex.set(account.id, nodes.length);
     nodes.push({ name: account.name, color: "#94a3b8" });
   }
 
-  // Add category nodes (from accCatSpending keys), then "Other" last
-  const categoryIds = new Set<string>();
-  for (const [key] of accCatSpending) {
-    const [_accountId, catId] = key.split("|");
-    categoryIds.add(catId);
+  const categoryKeys = new Set<string>();
+  for (const key of accCatSpending.keys()) categoryKeys.add(key.split("|")[1]);
+  // Real categories first, "Other" last.
+  for (const categoryId of categoryKeys) {
+    if (categoryId === OTHER_CATEGORY_KEY) continue;
+    const info = context.categoryInfo.get(categoryId);
+    categoryIndex.set(categoryId, nodes.length);
+    nodes.push({ name: info?.name ?? categoryId, color: info?.color ?? FALLBACK_CATEGORY_COLOR, categoryId });
   }
-  // Add non-Other categories first, then "Other" last
-  for (const catId of categoryIds) {
-    if (catId === "Other") continue;
-    const info = categoryInfo.get(catId);
-    const idx = nodes.length;
-    categoryIndex.set(catId, idx);
-    nodes.push({
-      name: info?.name ?? catId,
-      color: info?.color ?? "#6b7280",
-    });
-  }
-  // Add subcategory nodes (from catSubSpending keys)
-  // Each subcategory gets its own node, even if it shares a name with a category.
-  // This ensures the Sankey renders distinct columns for category and subcategory levels
-  // (e.g., "Groceries" at level 2 and "Groceries" at level 3 are separate nodes).
+  // Each subcategory gets its own node, even when it shares a name with its
+  // category, so the category and subcategory columns stay distinct.
   const subcategoryIds = new Set<string>();
-  for (const [key] of catSubSpending) {
-    const [_topCatId, subCatId] = key.split("|");
-    subcategoryIds.add(subCatId);
-  }
-  for (const subCatId of subcategoryIds) {
-    const info = categoryInfo.get(subCatId);
-    const idx = nodes.length;
-    subcategoryIndex.set(subCatId, idx);
+  for (const key of catSubSpending.keys()) subcategoryIds.add(key.split("|")[1]);
+  for (const subcategoryId of subcategoryIds) {
+    const info = context.categoryInfo.get(subcategoryId);
+    subcategoryIndex.set(subcategoryId, nodes.length);
     nodes.push({
-      name: info?.name ?? subCatId,
-      color: info?.color ?? "#6b7280",
+      name: info?.name ?? subcategoryId,
+      color: info?.color ?? FALLBACK_CATEGORY_COLOR,
+      categoryId: subcategoryId,
     });
   }
-  // Add "Other" as a category node only (for uncategorized transactions with no category)
-  if (categoryIds.has("Other")) {
-    const idx = nodes.length;
-    categoryIndex.set("Other", idx);
-    subcategoryIndex.set("Other", idx);
-    nodes.push({ name: "Other", color: "#9ca3af" });
+  if (categoryKeys.has(OTHER_CATEGORY_KEY)) {
+    const index = nodes.length;
+    categoryIndex.set(OTHER_CATEGORY_KEY, index);
+    subcategoryIndex.set(OTHER_CATEGORY_KEY, index);
+    nodes.push({ name: "Other", color: "#9ca3af", categoryId: null });
   }
 
-  // Create links: account → category
   for (const [key, value] of accCatSpending) {
-    const [accountId, catId] = key.split("|");
-    const sourceIdx = accountIndex.get(accountId);
-    const targetIdx = categoryIndex.get(catId);
-    if (sourceIdx !== undefined && targetIdx !== undefined) {
-      links.push({ source: sourceIdx, target: targetIdx, value });
-    }
+    const [accountId, categoryId] = key.split("|");
+    const source = accountIndex.get(accountId);
+    const target = categoryIndex.get(categoryId);
+    if (source !== undefined && target !== undefined) links.push({ source, target, value });
   }
-
-  // Create links: category → subcategory
   for (const [key, value] of catSubSpending) {
-    const [topCatId, subCatId] = key.split("|");
-    const sourceIdx = categoryIndex.get(topCatId);
-    const targetIdx = subcategoryIndex.get(subCatId);
-    if (sourceIdx !== undefined && targetIdx !== undefined) {
-      links.push({ source: sourceIdx, target: targetIdx, value });
-    }
+    const [topCategoryId, subcategoryId] = key.split("|");
+    const source = categoryIndex.get(topCategoryId);
+    const target = subcategoryIndex.get(subcategoryId);
+    if (source !== undefined && target !== undefined) links.push({ source, target, value });
   }
 
   return { nodes, links };
+}
+
+// --- Category drill-down ---
+
+export interface CategoryExpense {
+  transactionId: string;
+  date: string;
+  description: string | null;
+  accountName: string;
+  /** Names of the subcategories this expense was spent on; empty when none. */
+  subcategoryNames: string[];
+  /** The part of the expense counted in the category, positive minor units. */
+  amountMinor: number;
+}
+
+export interface CategoryExpenses {
+  expenses: CategoryExpense[];
+  /** Equals the category's account→category total in the Sankey. */
+  totalMinor: number;
+}
+
+export interface CategoryExpensesFilter extends AnalyticsFilter {
+  /** Top-level category id, or null for the uncategorized "Other" bucket. */
+  categoryId: string | null;
+}
+
+export class CategoryNotFoundError extends Error {
+  constructor() {
+    super("Category not found");
+    this.name = "CategoryNotFoundError";
+  }
+}
+
+/**
+ * Every expense counted in one top-level category of the Sankey for the same
+ * filter, using the same attribution, so the rows add up to the chart's amount.
+ * A category id the user does not own fails like a missing one.
+ */
+export async function getCategoryExpensesInternal(
+  userId: string,
+  filter: CategoryExpensesFilter,
+): Promise<CategoryExpenses> {
+  if (filter.categoryId !== null) {
+    const owned = await db
+      .select({ id: schema.categories.id })
+      .from(schema.categories)
+      .where(and(eq(schema.categories.id, filter.categoryId), eq(schema.categories.user_id, userId)))
+      .limit(1);
+    if (owned.length === 0) throw new CategoryNotFoundError();
+  }
+
+  const context = await loadExpenseContext(userId, filter);
+  // The Sankey only draws bands from the user's own (filtered) accounts.
+  const accountIds = new Set(context.accounts.map((account) => account.id));
+  const categoryKey = filter.categoryId ?? OTHER_CATEGORY_KEY;
+
+  const expenses: CategoryExpense[] = [];
+  for (const transaction of context.transactions) {
+    if (!accountIds.has(transaction.accountId)) continue;
+    for (const allocation of allocateToTopCategories(context, transaction)) {
+      if (allocation.categoryKey !== categoryKey) continue;
+      expenses.push({
+        transactionId: transaction.id,
+        date: transaction.date,
+        description: transaction.description,
+        accountName: transaction.accountName,
+        subcategoryNames: allocation.subcategoryIds.map(
+          (id) => context.categoryInfo.get(id)?.name ?? "Unknown",
+        ),
+        amountMinor: allocation.amount,
+      });
+    }
+  }
+
+  expenses.sort(
+    (a, b) => b.date.localeCompare(a.date) || a.transactionId.localeCompare(b.transactionId),
+  );
+  return {
+    expenses,
+    totalMinor: expenses.reduce((sum, expense) => sum + expense.amountMinor, 0),
+  };
 }
 
 /**

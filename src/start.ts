@@ -15,6 +15,14 @@ const requestContextMiddleware = createMiddleware().server(
   },
 );
 
+// Scopes the UI locale (PARAGLIDE_LOCALE cookie, then Accept-Language) to the
+// request so SSR and server-function messages match what the client renders.
+// Dynamic import: the server module pulls in node:async_hooks.
+const localeMiddleware = createMiddleware().server(async ({ next, request }) => {
+  const { runWithRequestLocale } = await import("#/server/locale.server");
+  return runWithRequestLocale(request, () => next());
+});
+
 // Reports errors thrown inside server-function handlers — these are
 // serialized into RPC responses by TanStack before the request middleware
 // could see them.
@@ -68,6 +76,7 @@ const securityHeadersMiddleware = createMiddleware().server(
 export const startInstance = createStart(() => ({
   requestMiddleware: [
     requestContextMiddleware,
+    localeMiddleware,
     maintenanceMiddleware,
     csrfMiddleware,
     securityHeadersMiddleware,
